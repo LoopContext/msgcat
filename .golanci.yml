@@ -1,0 +1,23 @@
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+linters:
+  enable-all: true
+
+linters-settings:
+  gocognit:
+    min-complexity: 35
+  lll:
+    line-length: 140
+  funlen:
+    lines: 80
+    statements: 50
+
+issues:
+  exclude-rules:
+    - source: '^//go:generate '
+      path: /
+      linters:
+        - lll

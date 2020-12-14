@@ -1,0 +1,14 @@
+group: 0
+default:
+  short: Unexpected error
+  long: Unexpected error was received and was not found in catalog
+set:
+  1:
+    short: Hello short description
+    long: Hello veeery long description. You can only see me in details page.
+  2:
+    short: Hello template {{0}}, this is nice {{1}}
+    long: Hello veeery long {{0}} description. You can only see me in details {{1}} page.
+  3:
+    short: Invalid entry .p0}}
+    long: Invalid entry {{.p0, please fix using {{.p3}}
