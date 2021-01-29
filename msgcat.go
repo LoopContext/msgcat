@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-//go:generate mockgen -source=msgcat.go -package mock_msgcat -destination=test/mock/msgcat.go
+//go:generate mockgen -source=$GOFILE -package mock_msgcat -destination=test/mock/$GOFILE
 
 const MessageCatalogNotFound = "Unexpected error in message catalog, language [%s] not found. %s"
 
