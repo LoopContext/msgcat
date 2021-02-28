@@ -1,5 +1,7 @@
 package msgcat
 
+type ContextKey string
+
 type Messages struct {
 	Group   int                `yaml:"group"`
 	Default RawMessage         `yaml:"default"`
@@ -20,5 +22,5 @@ type Message struct {
 
 type Config struct {
 	ResourcePath   string
-	CtxLanguageKey string
+	CtxLanguageKey ContextKey
 }
