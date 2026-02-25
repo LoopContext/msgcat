@@ -3,6 +3,10 @@ package test_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
 
 	"github.com/loopcontext/msgcat"
 	"github.com/loopcontext/msgcat/test"
@@ -107,6 +111,29 @@ var _ = Describe("Message Catalog", func() {
 		Expect(err.Error()).To(Equal("Mensagem curta de sistema"))
 	})
 
+	It("should load code messages when YAML set is missing", func() {
+		tmpDir, err := os.MkdirTemp("", "msgcat-missing-set-*")
+		Expect(err).NotTo(HaveOccurred())
+		defer os.RemoveAll(tmpDir)
+
+		content := []byte("group: 0\ndefault:\n  short: Unexpected error\n  long: Unexpected error from missing set file\n")
+		err = os.WriteFile(filepath.Join(tmpDir, "en.yaml"), content, 0o600)
+		Expect(err).NotTo(HaveOccurred())
+
+		customCatalog, err := msgcat.NewMessageCatalog(msgcat.Config{
+			ResourcePath: tmpDir,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		err = customCatalog.LoadMessages("en", []msgcat.RawMessage{{
+			LongTpl:  "Loaded from code",
+			ShortTpl: "Loaded from code short",
+			Code:     9001,
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(customCatalog.GetMessageWithCtx(ctx.Ctx, 9001).ShortText).To(Equal("Loaded from code short"))
+	})
+
 	It("should allow to load system messages between 9000-9999", func() {
 		err := messageCatalog.LoadMessages("en", []msgcat.RawMessage{{
 			LongTpl:  "Some long system message",
@@ -127,5 +154,56 @@ var _ = Describe("Message Catalog", func() {
 		ctErr := messageCatalog.WrapErrorWithCtx(ctx.Ctx, err, 1)
 		Expect(errors.Is(ctErr, err)).To(BeTrue())
 		Expect(errors.Unwrap(ctErr)).To(Equal(err))
+	})
+
+	It("should be safe under concurrent reads and writes", func() {
+		ctx.SetValue("language", "en")
+
+		const (
+			readers       = 12
+			readerIters   = 200
+			writerEntries = 20
+		)
+
+		errCh := make(chan error, readers+writerEntries)
+		var wg sync.WaitGroup
+
+		for i := 0; i < readers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < readerIters; j++ {
+					msg := messageCatalog.GetMessageWithCtx(ctx.Ctx, 1)
+					if msg.ShortText == "" {
+						errCh <- fmt.Errorf("received empty message")
+						return
+					}
+				}
+			}()
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < writerEntries; i++ {
+				code := 9000 + i
+				err := messageCatalog.LoadMessages("en", []msgcat.RawMessage{{
+					LongTpl:  fmt.Sprintf("Long %d", code),
+					ShortTpl: fmt.Sprintf("Short %d", code),
+					Code:     code,
+				}})
+				if err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}()
+
+		wg.Wait()
+		close(errCh)
+
+		for err := range errCh {
+			Expect(err).NotTo(HaveOccurred())
+		}
 	})
 })

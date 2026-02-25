@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v2"
 )
@@ -22,6 +23,7 @@ type MessageCatalog interface {
 }
 
 type DefaultMessageCatalog struct {
+	mu       sync.RWMutex
 	messages map[string]Messages // language with messages indexed by id
 	cfg      Config
 }
@@ -54,16 +56,45 @@ func (dmc *DefaultMessageCatalog) loadFromYaml() error {
 			if err != nil {
 				return fmt.Errorf("failed to unmarshal messages: %v", err)
 			}
+			if err := normalizeAndValidateMessages(lang, &messages); err != nil {
+				return err
+			}
 			messageByLang[lang] = messages
 		}
 	}
 
+	dmc.mu.Lock()
 	dmc.messages = messageByLang
+	dmc.mu.Unlock()
+
+	return nil
+}
+
+func normalizeAndValidateMessages(lang string, messages *Messages) error {
+	if messages.Group < 0 {
+		return fmt.Errorf("invalid message group for language %s: must be >= 0", lang)
+	}
+	if messages.Default.ShortTpl == "" && messages.Default.LongTpl == "" {
+		return fmt.Errorf("invalid default message for language %s: at least short or long text is required", lang)
+	}
+	if messages.Set == nil {
+		messages.Set = map[int]RawMessage{}
+	}
+	for code, raw := range messages.Set {
+		if code <= 0 {
+			return fmt.Errorf("invalid message code %d for language %s: must be > 0", code, lang)
+		}
+		raw.Code = code
+		messages.Set[code] = raw
+	}
 
 	return nil
 }
 
 func (dmc *DefaultMessageCatalog) LoadMessages(lang string, messages []RawMessage) error {
+	dmc.mu.Lock()
+	defer dmc.mu.Unlock()
+
 	if dmc.messages == nil {
 		dmc.messages = map[string]Messages{}
 	}
@@ -103,10 +134,14 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgCode
 			lang = fmt.Sprintf("%v", langKeyVal)
 		}
 	}
-	if langMsgSet, foundLangMsg := dmc.messages[lang]; foundLangMsg {
-		shortMessage := langMsgSet.Default.ShortTpl
-		longMessage := langMsgSet.Default.LongTpl
-		code := 999999998
+	dmc.mu.RLock()
+	langMsgSet, foundLangMsg := dmc.messages[lang]
+	shortMessage := ""
+	longMessage := ""
+	code := 999999998
+	if foundLangMsg {
+		shortMessage = langMsgSet.Default.ShortTpl
+		longMessage = langMsgSet.Default.LongTpl
 		if msg, foundMsg := langMsgSet.Set[msgCode]; foundMsg {
 			// prepare mapped params
 			shortMessage = msg.ShortTpl
@@ -115,6 +150,9 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgCode
 		} else {
 			msgParams = []interface{}{msgCode}
 		}
+	}
+	dmc.mu.RUnlock()
+	if foundLangMsg {
 		for paramIdx, paramVal := range msgParams {
 			shortMessage = strings.ReplaceAll(shortMessage, fmt.Sprintf("{{%d}}", paramIdx), fmt.Sprintf("%v", paramVal))
 			longMessage = strings.ReplaceAll(longMessage, fmt.Sprintf("{{%d}}", paramIdx), fmt.Sprintf("%v", paramVal))
