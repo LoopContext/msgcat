@@ -20,8 +20,8 @@ const MessageCatalogNotFound = "Unexpected error in message catalog, language [%
 const (
 	SystemMessageMinCode = 9000
 	SystemMessageMaxCode = 9999
-	CodeMissingMessage   = 999999998
-	CodeMissingLanguage  = 99999999
+	CodeMissingMessage   = 999999002
+	CodeMissingLanguage  = 999999001
 	overflowStatKey      = "__overflow__"
 )
 
