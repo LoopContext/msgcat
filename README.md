@@ -1,146 +1,58 @@
 # msgcat
 
-Message catalog to handle i18n of your messages and errors. msg-meow!
+`msgcat` is a lightweight i18n message catalog for Go focused on APIs and error handling.
 
-## Description
+It loads messages from YAML by language, resolves language from `context.Context`, supports runtime message loading for system codes, and can wrap domain errors with localized short/long messages.
 
-msgcat allows to setup a yaml formatted, context driven message catalog, 
-that is, is possible to setup different language files for the implementing project.
-
-Since it uses context key "language" (configurable as needed) to get the current 
-language, it's possible to get the language of a given request from start to finish, 
-this is specially good for i18n on APIs :)
-
-## First thigs first
-
-### go get msgcat onto your project
+## Installation
 
 ```bash
 go get github.com/loopcontext/msgcat
 ```
 
-### Create the resource files
-The project layout should be like this by default (you can override the configuration of the catalog)
+## Quick Start
 
-```ascii-art
-/ (project root)
-|
- -resources
-     |
-      - messages
-         |
-          - en.yaml
-         |
-          - es.yaml
+### 1. Create message files
+
+Default path:
+
+```text
+./resources/messages
 ```
----
-`en.yaml`
+
+Example `en.yaml`:
 
 ```yaml
+group: 0
 default:
   short: Unexpected error
   long: Unexpected message code [{{0}}] was received and was not found in this catalog
 set:
   1:
-    short: This is a message in english
+    short: User created
+    long: User {{0}} was created successfully
   2:
-    short: This is an error message
-    long: Any variable can be injected here {{0}}
+    short: You have {{0}} {{plural:0|item|items}}
+    long: Total: {{num:1}} generated at {{date:2}}
 ```
----
-`es.yaml`
+
+Example `es.yaml`:
 
 ```yaml
+group: 0
 default:
   short: Error inesperado
-  long: Error inesperado con el con el código [{{0}}] ha sido solicitado y no encontrado en este catálogo.
+  long: Se recibió un código de mensaje inesperado [{{0}}] y no se encontró en el catálogo
 set:
   1:
-    short: Este mensaje es en español
+    short: Usuario creado
+    long: Usuario {{0}} fue creado correctamente
+  2:
+    short: Tienes {{0}} {{plural:0|elemento|elementos}}
+    long: Total: {{num:1}} generado el {{date:2}}
 ```
 
-Once have the files have been created, it's time to code!
-
-```go
-package main
-
-import (
-	"context"
-	"errors"
-	"fmt"
-
-	"github.com/loopcontext/msgcat"
-)
-
-func main() {
-	ctx := context.WithValue(context.Background(), "language", "en")
-	catalog, err := msgcat.NewMessageCatalog(msgcat.Config{
-		// CtxLanguageKey: "lang",
-		// ResourcePath: "path/to/resource",
-	})
-	if err != nil {
-		fmt.Printf("%q",err)
-	}
-	printMessage(ctx, catalog.GetMessageWithCtx(ctx, 1))
-	printMessage(ctx, catalog.GetMessageWithCtx(ctx, 2, 2*2))
-	// The message can be get as a error
-	printError(ctx, catalog.GetErrorWithCtx(ctx, 1))
-	// The message can wrap another error
-	printError(ctx, catalog.WrapErrorWithCtx(ctx, errors.New("This error is wrapped"), 1))
-
-	ctx = context.WithValue(context.Background(), "language", "es")
-	printMessage(ctx, catalog.GetMessageWithCtx(ctx, 1))
-	printMessage(ctx, catalog.GetMessageWithCtx(ctx, 2)) // this will fail
-	printError(ctx, catalog.GetErrorWithCtx(ctx, 1))
-	printError(ctx, catalog.WrapErrorWithCtx(ctx, errors.New("This error is wrapped"), 1))
-}
-
-func printMessage(ctx context.Context, msg *msgcat.Message) {
-	fmt.Printf("\nLanguage: %s\nShort: %s\nLong: %s\n", ctx.Value("language"), msg.ShortText, msg.LongText)
-}
-
-func printError(ctx context.Context, err error) {
-	wrapped := errors.Unwrap(err)
-	if wrapped != nil {
-		err = wrapped
-	}
-	fmt.Printf("\nLanguage: %s\nError: %q\n", ctx.Value("language"), err)
-}
-```
-
-This is the output:
-
-```
-Language: en
-Short: This is a message in english
-Long: 
-
-Language: en
-Short: This is an error message
-Long: Any variable can be injected here 4
-
-Language: en
-Error: "This is a message in english"
-
-Language: en
-Error: "This error is wrapped"
-
-Language: es
-Short: Este mensaje es en español
-Long: 
-
-Language: es
-Short: Error inesperado
-Long: Error inesperado con el con el código [2] ha sido solicitado y no encontrado en este catálogo.
-
-Language: es
-Error: "Este mensaje es en español"
-
-Language: es
-Error: "This error is wrapped"
-```
-
-## Production Configuration
+### 2. Initialize catalog
 
 ```go
 catalog, err := msgcat.NewMessageCatalog(msgcat.Config{
@@ -150,55 +62,101 @@ catalog, err := msgcat.NewMessageCatalog(msgcat.Config{
   FallbackLanguages: []string{"es"},
   StrictTemplates:   true,
 })
-```
-
-- `DefaultLanguage` defines the initial language when context has no language value.
-- `FallbackLanguages` is evaluated after regional/base fallbacks (for example, `es-AR -> es`).
-- `StrictTemplates` replaces missing params with `<missing:n>` and records template issues.
-
-## Template Tokens
-
-- `{{0}}`, `{{1}}`: positional params.
-- `{{plural:0|one item|many items}}`: plural selection from numeric param.
-- `{{num:1}}`: localized number format.
-- `{{date:2}}`: localized date format (`en` uses `MM/DD/YYYY`, `es`/`pt`/`fr`/`de`/`it` use `DD/MM/YYYY`).
-
-## Runtime Reload
-
-```go
-if err := msgcat.Reload(catalog); err != nil {
-  // handle reload error
+if err != nil {
+  panic(err)
 }
 ```
 
-`Reload` re-reads YAML resources and keeps runtime-loaded messages (`LoadMessages`).
+### 3. Resolve messages/errors from context
+
+```go
+ctx := context.WithValue(context.Background(), "language", "es-AR")
+
+msg := catalog.GetMessageWithCtx(ctx, 1, "juan")
+fmt.Println(msg.ShortText) // "Usuario creado"
+
+err := catalog.WrapErrorWithCtx(ctx, errors.New("db timeout"), 2, 3, 12345.5, time.Now())
+fmt.Println(err.Error()) // localized short message
+```
+
+## Features
+
+- Language resolution from context (typed key and string key compatibility).
+- Language fallback chain: requested -> base (`es-ar` -> `es`) -> configured fallbacks -> default -> `en`.
+- YAML + runtime-loaded system messages (`9000-9999`).
+- Template tokens:
+  - `{{0}}`, `{{1}}`, ... positional
+  - `{{plural:i|singular|plural}}`
+  - `{{num:i}}` localized number format
+  - `{{date:i}}` localized date format
+- Strict template mode (`StrictTemplates`) for missing parameters.
+- Error wrapping with localized short/long messages and error code.
+- Concurrency-safe reads/writes.
+- Runtime reload (`msgcat.Reload`) preserving runtime-loaded messages.
+- Observability hooks and counters (`SnapshotStats`).
+
+## API
+
+### Core interface
+
+- `LoadMessages(lang string, messages []RawMessage) error`
+- `GetMessageWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) *Message`
+- `WrapErrorWithCtx(ctx context.Context, err error, msgCode int, msgParams ...interface{}) error`
+- `GetErrorWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) error`
+
+### Helpers
+
+- `msgcat.Reload(catalog MessageCatalog) error`
+- `msgcat.SnapshotStats(catalog MessageCatalog) (MessageCatalogStats, error)`
+
+### Constants
+
+- `SystemMessageMinCode = 9000`
+- `SystemMessageMaxCode = 9999`
+- `CodeMissingMessage = 999999998`
+- `CodeMissingLanguage = 99999999`
 
 ## Observability
 
-You can provide a custom observer:
+Provide an observer in config:
 
 ```go
 type Observer struct{}
 
 func (Observer) OnLanguageFallback(requested, resolved string) {}
-func (Observer) OnLanguageMissing(lang string)                 {}
-func (Observer) OnMessageMissing(lang string, msgCode int)     {}
+func (Observer) OnLanguageMissing(lang string) {}
+func (Observer) OnMessageMissing(lang string, msgCode int) {}
 func (Observer) OnTemplateIssue(lang string, msgCode int, issue string) {}
 ```
 
-And capture internal counters at any time:
+Snapshot counters at runtime:
 
 ```go
 stats, err := msgcat.SnapshotStats(catalog)
 if err == nil {
-  // stats.LanguageFallbacks, stats.MissingLanguages, ...
+  _ = stats.LanguageFallbacks
+  _ = stats.MissingLanguages
+  _ = stats.MissingMessages
+  _ = stats.TemplateIssues
 }
 ```
+
+## Production Notes
+
+- Keep `DefaultLanguage` explicit (`en` recommended).
+- Define `FallbackLanguages` intentionally (for example for regional traffic).
+- Use `StrictTemplates: true` in production to detect bad template usage early.
+- Use `go test -race ./...` in CI.
+- For periodic YAML refresh, call `msgcat.Reload(catalog)` in a controlled goroutine.
 
 ## Benchmarks
 
 Run:
 
 ```bash
-go test -bench . -benchmem ./...
+go test -run ^$ -bench . -benchmem ./...
 ```
+
+## Context7 / LLM Docs
+
+For full machine-friendly docs, see `CONTEXT7.md`.
