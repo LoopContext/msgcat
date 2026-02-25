@@ -39,6 +39,22 @@ git push origin v1.0.0
 - Performance notes: benchmark deltas.
 - Operational notes: observer/stats/reload caveats.
 
+### Example (v1.0.8)
+
+```markdown
+## Summary
+Production hardening: async observer, bounded stats, reload retries, CI, SECURITY.md, Go 1.26, and lint config.
+
+## Breaking changes
+None. Go 1.26+ required (see migration guide).
+
+## Migration
+[Migration guide](docs/MIGRATION.md) — sections 3–6 and 8 (Go version).
+
+## Operational
+Observer is async and panic-safe; call `msgcat.Close(catalog)` on shutdown if using an observer.
+```
+
 ## Post-release checks
 
 - Validate tag visible in remote.
