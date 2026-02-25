@@ -4,6 +4,8 @@
 
 It loads messages from YAML by language, resolves language from `context.Context`, supports runtime message loading for system codes, and can wrap domain errors with localized short/long messages.
 
+Maturity: production-ready (`v1.x`) with SemVer and release/migration docs in `docs/`.
+
 ## Installation
 
 ```bash
@@ -112,6 +114,8 @@ fmt.Println(err.Error()) // localized short message
 
 - `msgcat.Reload(catalog MessageCatalog) error`
 - `msgcat.SnapshotStats(catalog MessageCatalog) (MessageCatalogStats, error)`
+- `msgcat.ResetStats(catalog MessageCatalog) error`
+- `msgcat.Close(catalog MessageCatalog) error`
 
 ### Constants
 
@@ -157,6 +161,14 @@ if err == nil {
 - Use `go test -race ./...` in CI.
 - For periodic YAML refresh, call `msgcat.Reload(catalog)` in a controlled goroutine and prefer atomic file replacement (`write temp + rename`).
 - Use `ReloadRetries` and `ReloadRetryDelay` to reduce transient parse/read errors during rollout windows.
+- If observer is configured, call `msgcat.Close(catalog)` on service shutdown.
+
+### Runtime Contract
+
+- `GetMessageWithCtx` / `GetErrorWithCtx` / `WrapErrorWithCtx` are safe for concurrent use.
+- `LoadMessages` and `Reload` are safe concurrently with reads.
+- `Reload` keeps the last in-memory state if reload fails.
+- Observer callbacks are async and panic-protected; overflow is counted in `DroppedEvents`.
 
 ## Benchmarks
 
@@ -166,7 +178,19 @@ Run:
 go test -run ^$ -bench . -benchmem ./...
 ```
 
+## Integration Examples
+
+- HTTP language middleware sample: `examples/http/main.go`
+- Metrics/observer sample (expvar style): `examples/metrics/main.go`
+
 ## Context7 / LLM Docs
 
 For full machine-friendly docs, see `docs/CONTEXT7.md`.
 For retrieval-optimized chunks, see `docs/CONTEXT7_RETRIEVAL.md`.
+
+## Release + Migration
+
+- Changelog: `docs/CHANGELOG.md`
+- Migration guide: `docs/MIGRATION.md`
+- Release playbook: `docs/RELEASE.md`
+- Support policy: `docs/SUPPORT.md`

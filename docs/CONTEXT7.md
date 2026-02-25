@@ -157,6 +157,7 @@ func Close(catalog MessageCatalog) error
 
 Notes:
 - helpers require concrete catalog support; otherwise return error.
+- call `Close(catalog)` on shutdown when observer is enabled.
 
 ## 7. Constants
 
@@ -269,6 +270,13 @@ Safe operations in concurrent services:
 - statistics snapshot: `SnapshotStats`
 
 Race tests pass with `go test -race ./...`.
+
+## 13.1 Runtime Contract
+
+- Read path methods are safe under concurrent use.
+- `LoadMessages` and `Reload` can run concurrently with reads.
+- If `Reload` fails, previously loaded in-memory messages remain available.
+- Observer callback failures do not fail request-path calls.
 
 ## 14. Observability Semantics
 

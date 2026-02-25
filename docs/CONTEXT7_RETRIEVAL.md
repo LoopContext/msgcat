@@ -181,6 +181,7 @@ Concurrency safety via RW mutex:
 - Safe concurrent writes (`LoadMessages`, `Reload`)
 - Safe stat snapshots
 - Observer callbacks run asynchronously and are panic-protected.
+- `Reload` failure keeps last in-memory state intact.
 
 Validated with `go test -race ./...`.
 
