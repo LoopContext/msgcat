@@ -6,3 +6,6 @@ set:
   1:
     short: Hola, breve descripción
     long: Hola, descripción muy larga. Solo puedes verme en la página de detalles.
+  4:
+    short: "Tienes {{0}} {{plural:0|elemento|elementos}}"
+    long: "Total: {{num:1}} generado el {{date:2}}"

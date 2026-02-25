@@ -1,5 +1,7 @@
 package msgcat
 
+import "time"
+
 type ContextKey string
 
 type Messages struct {
@@ -20,7 +22,26 @@ type Message struct {
 	Code      int
 }
 
+type MessageCatalogStats struct {
+	LanguageFallbacks map[string]int
+	MissingLanguages  map[string]int
+	MissingMessages   map[string]int
+	TemplateIssues    map[string]int
+}
+
+type Observer interface {
+	OnLanguageFallback(requestedLang string, resolvedLang string)
+	OnLanguageMissing(lang string)
+	OnMessageMissing(lang string, msgCode int)
+	OnTemplateIssue(lang string, msgCode int, issue string)
+}
+
 type Config struct {
-	ResourcePath   string
-	CtxLanguageKey ContextKey
+	ResourcePath      string
+	CtxLanguageKey    ContextKey
+	DefaultLanguage   string
+	FallbackLanguages []string
+	StrictTemplates   bool
+	Observer          Observer
+	NowFn             func() time.Time
 }

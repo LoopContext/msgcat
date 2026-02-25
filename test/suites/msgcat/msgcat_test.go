@@ -6,13 +6,47 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/loopcontext/msgcat"
 	"github.com/loopcontext/msgcat/test"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
+
+type mockObserver struct {
+	mu             sync.Mutex
+	fallbacks      []string
+	missingLangs   []string
+	missingCodes   []string
+	templateIssues []string
+}
+
+func (o *mockObserver) OnLanguageFallback(requestedLang string, resolvedLang string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.fallbacks = append(o.fallbacks, requestedLang+"->"+resolvedLang)
+}
+
+func (o *mockObserver) OnLanguageMissing(lang string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.missingLangs = append(o.missingLangs, lang)
+}
+
+func (o *mockObserver) OnMessageMissing(lang string, msgCode int) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.missingCodes = append(o.missingCodes, fmt.Sprintf("%s:%d", lang, msgCode))
+}
+
+func (o *mockObserver) OnTemplateIssue(lang string, msgCode int, issue string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.templateIssues = append(o.templateIssues, fmt.Sprintf("%s:%d:%s", lang, msgCode, issue))
+}
 
 var _ = Describe("Message Catalog", func() {
 	var messageCatalog msgcat.MessageCatalog
@@ -68,6 +102,12 @@ var _ = Describe("Message Catalog", func() {
 
 	It("should read language with typed context key", func() {
 		ctx.SetValue(msgcat.ContextKey("language"), "es")
+		message := messageCatalog.GetMessageWithCtx(ctx.Ctx, 1)
+		Expect(message.ShortText).To(Equal("Hola, breve descripción"))
+	})
+
+	It("should fallback from regional language to base language", func() {
+		ctx.SetValue("language", "es-AR")
 		message := messageCatalog.GetMessageWithCtx(ctx.Ctx, 1)
 		Expect(message.ShortText).To(Equal("Hola, breve descripción"))
 	})
@@ -154,6 +194,95 @@ var _ = Describe("Message Catalog", func() {
 		ctErr := messageCatalog.WrapErrorWithCtx(ctx.Ctx, err, 1)
 		Expect(errors.Is(ctErr, err)).To(BeTrue())
 		Expect(errors.Unwrap(ctErr)).To(Equal(err))
+	})
+
+	It("should render pluralization and localized number/date tokens", func() {
+		date := time.Date(2026, time.January, 3, 10, 0, 0, 0, time.UTC)
+		msgEN := messageCatalog.GetMessageWithCtx(ctx.Ctx, 4, 3, 12345.5, date)
+		Expect(msgEN.ShortText).To(Equal("You have 3 items"))
+		Expect(msgEN.LongText).To(Equal("Total: 12,345.5 generated at 01/03/2026"))
+
+		ctx.SetValue("language", "es")
+		msgES := messageCatalog.GetMessageWithCtx(ctx.Ctx, 4, 1, 12345.5, date)
+		Expect(msgES.ShortText).To(Equal("Tienes 1 elemento"))
+		Expect(msgES.LongText).To(Equal("Total: 12.345,5 generado el 03/01/2026"))
+	})
+
+	It("should support strict template checks and report template issues", func() {
+		observer := &mockObserver{}
+		strictCatalog, err := msgcat.NewMessageCatalog(msgcat.Config{
+			ResourcePath:      "./resources/messages",
+			StrictTemplates:   true,
+			DefaultLanguage:   "en",
+			CtxLanguageKey:    "language",
+			FallbackLanguages: []string{"es"},
+			Observer:          observer,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		msg := strictCatalog.GetMessageWithCtx(ctx.Ctx, 2, 1)
+		Expect(msg.ShortText).To(Equal("Hello template 1, this is nice <missing:1>"))
+
+		stats, err := msgcat.SnapshotStats(strictCatalog)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(len(stats.TemplateIssues)).To(BeNumerically(">", 0))
+		Expect(len(observer.templateIssues)).To(BeNumerically(">", 0))
+	})
+
+	It("should reload yaml changes and keep runtime loaded messages", func() {
+		tmpDir, err := os.MkdirTemp("", "msgcat-reload-*")
+		Expect(err).NotTo(HaveOccurred())
+		defer os.RemoveAll(tmpDir)
+
+		initial := []byte("group: 0\ndefault:\n  short: Unexpected error\n  long: Unexpected error from reload file\nset:\n  1:\n    short: Hello before reload\n")
+		err = os.WriteFile(filepath.Join(tmpDir, "en.yaml"), initial, 0o600)
+		Expect(err).NotTo(HaveOccurred())
+
+		customCatalog, err := msgcat.NewMessageCatalog(msgcat.Config{
+			ResourcePath: tmpDir,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		err = customCatalog.LoadMessages("en", []msgcat.RawMessage{{
+			LongTpl:  "Runtime long",
+			ShortTpl: "Runtime short",
+			Code:     9001,
+		}})
+		Expect(err).NotTo(HaveOccurred())
+
+		updated := []byte("group: 0\ndefault:\n  short: Unexpected error\n  long: Unexpected error from reload file\nset:\n  1:\n    short: Hello after reload\n")
+		err = os.WriteFile(filepath.Join(tmpDir, "en.yaml"), updated, 0o600)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = msgcat.Reload(customCatalog)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(customCatalog.GetMessageWithCtx(ctx.Ctx, 1).ShortText).To(Equal("Hello after reload"))
+		Expect(customCatalog.GetMessageWithCtx(ctx.Ctx, 9001).ShortText).To(Equal("Runtime short"))
+	})
+
+	It("should expose observability counters for fallback and misses", func() {
+		observer := &mockObserver{}
+		observedCatalog, err := msgcat.NewMessageCatalog(msgcat.Config{
+			ResourcePath:      "./resources/messages",
+			DefaultLanguage:   "en",
+			FallbackLanguages: []string{"es"},
+			Observer:          observer,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx.SetValue("language", "es-MX")
+		Expect(observedCatalog.GetMessageWithCtx(ctx.Ctx, 1).ShortText).To(Equal("Hola, breve descripción"))
+
+		ctx.SetValue("language", "pt-BR")
+		Expect(observedCatalog.GetMessageWithCtx(ctx.Ctx, 404).Code).To(Equal(msgcat.CodeMissingMessage))
+
+		stats, err := msgcat.SnapshotStats(observedCatalog)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(len(stats.LanguageFallbacks)).To(BeNumerically(">", 0))
+		Expect(len(stats.MissingMessages)).To(BeNumerically(">", 0))
+		Expect(strings.Join(observer.fallbacks, ",")).To(ContainSubstring("es-mx->es"))
+		Expect(len(observer.missingCodes)).To(BeNumerically(">", 0))
 	})
 
 	It("should be safe under concurrent reads and writes", func() {

@@ -139,3 +139,66 @@ Error: "Este mensaje es en español"
 Language: es
 Error: "This error is wrapped"
 ```
+
+## Production Configuration
+
+```go
+catalog, err := msgcat.NewMessageCatalog(msgcat.Config{
+  ResourcePath:      "./resources/messages",
+  CtxLanguageKey:    "language",
+  DefaultLanguage:   "en",
+  FallbackLanguages: []string{"es"},
+  StrictTemplates:   true,
+})
+```
+
+- `DefaultLanguage` defines the initial language when context has no language value.
+- `FallbackLanguages` is evaluated after regional/base fallbacks (for example, `es-AR -> es`).
+- `StrictTemplates` replaces missing params with `<missing:n>` and records template issues.
+
+## Template Tokens
+
+- `{{0}}`, `{{1}}`: positional params.
+- `{{plural:0|one item|many items}}`: plural selection from numeric param.
+- `{{num:1}}`: localized number format.
+- `{{date:2}}`: localized date format (`en` uses `MM/DD/YYYY`, `es`/`pt`/`fr`/`de`/`it` use `DD/MM/YYYY`).
+
+## Runtime Reload
+
+```go
+if err := msgcat.Reload(catalog); err != nil {
+  // handle reload error
+}
+```
+
+`Reload` re-reads YAML resources and keeps runtime-loaded messages (`LoadMessages`).
+
+## Observability
+
+You can provide a custom observer:
+
+```go
+type Observer struct{}
+
+func (Observer) OnLanguageFallback(requested, resolved string) {}
+func (Observer) OnLanguageMissing(lang string)                 {}
+func (Observer) OnMessageMissing(lang string, msgCode int)     {}
+func (Observer) OnTemplateIssue(lang string, msgCode int, issue string) {}
+```
+
+And capture internal counters at any time:
+
+```go
+stats, err := msgcat.SnapshotStats(catalog)
+if err == nil {
+  // stats.LanguageFallbacks, stats.MissingLanguages, ...
+}
+```
+
+## Benchmarks
+
+Run:
+
+```bash
+go test -bench . -benchmem ./...
+```

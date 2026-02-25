@@ -12,3 +12,6 @@ set:
   3:
     short: Invalid entry .p0}}
     long: Invalid entry {{.p0, please fix using {{.p3}}
+  4:
+    short: "You have {{0}} {{plural:0|item|items}}"
+    long: "Total: {{num:1}} generated at {{date:2}}"
