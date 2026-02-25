@@ -3,7 +3,7 @@ package msgcat
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,8 +20,8 @@ const MessageCatalogNotFound = "Unexpected error in message catalog, language [%
 const (
 	SystemMessageMinCode = 9000
 	SystemMessageMaxCode = 9999
-	CodeMissingMessage   = 999999998
-	CodeMissingLanguage  = 99999999
+	CodeMissingMessage   = 999999002
+	CodeMissingLanguage  = 999999001
 	overflowStatKey      = "__overflow__"
 )
 
@@ -180,7 +180,7 @@ func (dmc *DefaultMessageCatalog) readMessagesFromYaml() (map[string]Messages, e
 		resourcePath = "./resources/messages"
 	}
 
-	messageFiles, err := ioutil.ReadDir(resourcePath)
+	messageFiles, err := os.ReadDir(resourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find messages %v", err)
 	}
@@ -194,7 +194,7 @@ func (dmc *DefaultMessageCatalog) readMessagesFromYaml() (map[string]Messages, e
 		}
 		var messages Messages
 		lang := normalizeLangTag(strings.TrimSuffix(fileName, ".yaml"))
-		yamlFile, err := ioutil.ReadFile(fmt.Sprintf("%s/%s", resourcePath, fileName))
+		yamlFile, err := os.ReadFile(fmt.Sprintf("%s/%s", resourcePath, fileName))
 		if err != nil {
 			return nil, fmt.Errorf("failed to read message file: %v", err)
 		}

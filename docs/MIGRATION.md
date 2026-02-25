@@ -74,3 +74,7 @@ If you configured an observer, call `msgcat.Close(catalog)` on shutdown to flush
 - Context key lookup remains compatible with both typed key and plain string key.
 - Existing template syntax remains valid.
 - `LoadMessages` system-code constraint (`9000-9999`) is unchanged.
+
+## 8) Go version (v1.0.8+)
+
+Module requires **Go 1.26** or later. If you are on an older toolchain, upgrade before updating to msgcat v1.0.8.

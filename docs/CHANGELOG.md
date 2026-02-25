@@ -6,6 +6,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-02-25
+
 ### Added
 - Async, panic-safe observer pipeline with bounded queue (`ObserverBuffer`).
 - Bounded stats cardinality (`StatsMaxKeys`) with `__overflow__` bucket.
@@ -15,11 +17,16 @@ This project follows Semantic Versioning.
 - Production-oriented docs for Context7 + retrieval-friendly docs.
 - Additional tests: observer behavior, stats capping/reset, reload retry behavior.
 - Benchmarks and fuzz test entrypoints.
+- GitHub Actions CI workflow (test, race, vet, examples build).
+- `SECURITY.md` for vulnerability reporting.
+- `.golangci.yml` for lint configuration (replaces misspelled `.golanci.yml`).
 
 ### Changed
 - `Reload` now supports transient read/parse retries.
 - Observer callbacks are no longer executed inline on request path.
 - Stats now enforce key caps to avoid unbounded memory growth.
+- Go module requires Go 1.26.
+- Replaced deprecated `io/ioutil` with `os` (`ReadDir`, `ReadFile`).
 
 ### Fixed
 - Updated docs links to `docs/` layout.
