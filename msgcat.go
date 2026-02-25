@@ -341,6 +341,79 @@ func isPluralOne(value interface{}) (bool, bool) {
 	}
 }
 
+func parseTokenIndex(token string, prefix string) (int, bool) {
+	if !strings.HasPrefix(token, prefix) || !strings.HasSuffix(token, "}}") {
+		return 0, false
+	}
+	raw := strings.TrimSuffix(strings.TrimPrefix(token, prefix), "}}")
+	if raw == "" {
+		return 0, false
+	}
+	idx, err := strconv.Atoi(raw)
+	if err != nil || idx < 0 {
+		return 0, false
+	}
+	return idx, true
+}
+
+func parsePluralToken(token string) (idx int, singular string, plural string, ok bool) {
+	if !strings.HasPrefix(token, "{{plural:") || !strings.HasSuffix(token, "}}") {
+		return 0, "", "", false
+	}
+	raw := strings.TrimSuffix(strings.TrimPrefix(token, "{{plural:"), "}}")
+	parts := strings.SplitN(raw, "|", 3)
+	if len(parts) != 3 {
+		return 0, "", "", false
+	}
+	parsedIdx, err := strconv.Atoi(parts[0])
+	if err != nil || parsedIdx < 0 {
+		return 0, "", "", false
+	}
+	return parsedIdx, parts[1], parts[2], true
+}
+
+func toString(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case int:
+		return strconv.Itoa(typed)
+	case int8:
+		return strconv.FormatInt(int64(typed), 10)
+	case int16:
+		return strconv.FormatInt(int64(typed), 10)
+	case int32:
+		return strconv.FormatInt(int64(typed), 10)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case uint:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint64:
+		return strconv.FormatUint(typed, 10)
+	case float32:
+		return strconv.FormatFloat(float64(typed), 'f', -1, 32)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(typed)
+	case time.Time:
+		return typed.Format(time.RFC3339)
+	case *time.Time:
+		if typed == nil {
+			return "<nil>"
+		}
+		return typed.Format(time.RFC3339)
+	default:
+		return fmt.Sprintf("%v", value)
+	}
+}
+
 func groupDigits(input string, separator string) string {
 	if len(input) <= 3 {
 		return input
@@ -385,15 +458,35 @@ func formatNumberByLang(lang string, value interface{}) (string, bool) {
 
 	switch typed := value.(type) {
 	case int:
-		return groupDigits(strconv.Itoa(typed), groupSeparator), true
+		value := strconv.Itoa(typed)
+		if strings.HasPrefix(value, "-") {
+			return "-" + groupDigits(strings.TrimPrefix(value, "-"), groupSeparator), true
+		}
+		return groupDigits(value, groupSeparator), true
 	case int8:
-		return groupDigits(strconv.FormatInt(int64(typed), 10), groupSeparator), true
+		value := strconv.FormatInt(int64(typed), 10)
+		if strings.HasPrefix(value, "-") {
+			return "-" + groupDigits(strings.TrimPrefix(value, "-"), groupSeparator), true
+		}
+		return groupDigits(value, groupSeparator), true
 	case int16:
-		return groupDigits(strconv.FormatInt(int64(typed), 10), groupSeparator), true
+		value := strconv.FormatInt(int64(typed), 10)
+		if strings.HasPrefix(value, "-") {
+			return "-" + groupDigits(strings.TrimPrefix(value, "-"), groupSeparator), true
+		}
+		return groupDigits(value, groupSeparator), true
 	case int32:
-		return groupDigits(strconv.FormatInt(int64(typed), 10), groupSeparator), true
+		value := strconv.FormatInt(int64(typed), 10)
+		if strings.HasPrefix(value, "-") {
+			return "-" + groupDigits(strings.TrimPrefix(value, "-"), groupSeparator), true
+		}
+		return groupDigits(value, groupSeparator), true
 	case int64:
-		return groupDigits(strconv.FormatInt(typed, 10), groupSeparator), true
+		value := strconv.FormatInt(typed, 10)
+		if strings.HasPrefix(value, "-") {
+			return "-" + groupDigits(strings.TrimPrefix(value, "-"), groupSeparator), true
+		}
+		return groupDigits(value, groupSeparator), true
 	case uint:
 		return groupDigits(strconv.FormatUint(uint64(typed), 10), groupSeparator), true
 	case uint8:
@@ -584,91 +677,78 @@ func (dmc *DefaultMessageCatalog) resolveLanguage(requestedLang string) (string,
 }
 
 func (dmc *DefaultMessageCatalog) renderTemplate(lang string, msgCode int, template string, params []interface{}) string {
+	if !strings.Contains(template, "{{") {
+		return template
+	}
 	rendered := template
 	replaceMissing := func(issue string, originalToken string, idx int) string {
 		dmc.onTemplateIssue(lang, msgCode, issue)
 		if dmc.cfg.StrictTemplates {
-			return fmt.Sprintf("<missing:%d>", idx)
+			return "<missing:" + strconv.Itoa(idx) + ">"
 		}
 		return originalToken
 	}
 
 	rendered = pluralPlaceholderRegex.ReplaceAllStringFunc(rendered, func(token string) string {
-		matches := pluralPlaceholderRegex.FindStringSubmatch(token)
-		if len(matches) != 4 {
-			return token
-		}
-		idx, err := strconv.Atoi(matches[1])
-		if err != nil || idx < 0 {
+		idx, singular, plural, ok := parsePluralToken(token)
+		if !ok {
 			return token
 		}
 		if idx >= len(params) {
-			return replaceMissing(fmt.Sprintf("plural_missing_param_%d", idx), token, idx)
+			return replaceMissing("plural_missing_param_"+strconv.Itoa(idx), token, idx)
 		}
 		isOne, ok := isPluralOne(params[idx])
 		if !ok {
-			dmc.onTemplateIssue(lang, msgCode, fmt.Sprintf("plural_invalid_param_%d", idx))
+			dmc.onTemplateIssue(lang, msgCode, "plural_invalid_param_"+strconv.Itoa(idx))
 			return token
 		}
 		if isOne {
-			return matches[2]
+			return singular
 		}
-		return matches[3]
+		return plural
 	})
 
 	rendered = numberPlaceholderRegex.ReplaceAllStringFunc(rendered, func(token string) string {
-		matches := numberPlaceholderRegex.FindStringSubmatch(token)
-		if len(matches) != 2 {
-			return token
-		}
-		idx, err := strconv.Atoi(matches[1])
-		if err != nil || idx < 0 {
+		idx, ok := parseTokenIndex(token, "{{num:")
+		if !ok {
 			return token
 		}
 		if idx >= len(params) {
-			return replaceMissing(fmt.Sprintf("number_missing_param_%d", idx), token, idx)
+			return replaceMissing("number_missing_param_"+strconv.Itoa(idx), token, idx)
 		}
 		formatted, ok := formatNumberByLang(lang, params[idx])
 		if !ok {
-			dmc.onTemplateIssue(lang, msgCode, fmt.Sprintf("number_invalid_param_%d", idx))
+			dmc.onTemplateIssue(lang, msgCode, "number_invalid_param_"+strconv.Itoa(idx))
 			return token
 		}
 		return formatted
 	})
 
 	rendered = datePlaceholderRegex.ReplaceAllStringFunc(rendered, func(token string) string {
-		matches := datePlaceholderRegex.FindStringSubmatch(token)
-		if len(matches) != 2 {
-			return token
-		}
-		idx, err := strconv.Atoi(matches[1])
-		if err != nil || idx < 0 {
+		idx, ok := parseTokenIndex(token, "{{date:")
+		if !ok {
 			return token
 		}
 		if idx >= len(params) {
-			return replaceMissing(fmt.Sprintf("date_missing_param_%d", idx), token, idx)
+			return replaceMissing("date_missing_param_"+strconv.Itoa(idx), token, idx)
 		}
 		formatted, ok := formatDateByLang(lang, params[idx])
 		if !ok {
-			dmc.onTemplateIssue(lang, msgCode, fmt.Sprintf("date_invalid_param_%d", idx))
+			dmc.onTemplateIssue(lang, msgCode, "date_invalid_param_"+strconv.Itoa(idx))
 			return token
 		}
 		return formatted
 	})
 
 	rendered = simplePlaceholderRegex.ReplaceAllStringFunc(rendered, func(token string) string {
-		matches := simplePlaceholderRegex.FindStringSubmatch(token)
-		if len(matches) != 2 {
-			return token
-		}
-		idx, err := strconv.Atoi(matches[1])
-		if err != nil || idx < 0 {
+		idx, ok := parseTokenIndex(token, "{{")
+		if !ok {
 			return token
 		}
 		if idx >= len(params) {
-			return replaceMissing(fmt.Sprintf("simple_missing_param_%d", idx), token, idx)
+			return replaceMissing("simple_missing_param_"+strconv.Itoa(idx), token, idx)
 		}
-		return fmt.Sprintf("%v", params[idx])
+		return toString(params[idx])
 	})
 
 	return rendered
