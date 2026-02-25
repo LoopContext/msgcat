@@ -62,6 +62,12 @@ var _ = Describe("Message Catalog", func() {
 		Expect(message.ShortText).To(Equal("Hola, breve descripción"))
 	})
 
+	It("should read language with typed context key", func() {
+		ctx.SetValue(msgcat.ContextKey("language"), "es")
+		message := messageCatalog.GetMessageWithCtx(ctx.Ctx, 1)
+		Expect(message.ShortText).To(Equal("Hola, breve descripción"))
+	})
+
 	It("should return error with correct message", func() {
 		ctx.SetValue("language", "es")
 		err := messageCatalog.GetErrorWithCtx(ctx.Ctx, 1)
@@ -86,6 +92,19 @@ var _ = Describe("Message Catalog", func() {
 		Expect(err).NotTo(HaveOccurred())
 		err = messageCatalog.GetErrorWithCtx(ctx.Ctx, 9001)
 		Expect(err.Error()).To(Equal("Some short system message"))
+	})
+
+	It("should load code messages for a new language without panic", func() {
+		err := messageCatalog.LoadMessages("pt", []msgcat.RawMessage{{
+			LongTpl:  "Mensagem longa de sistema",
+			ShortTpl: "Mensagem curta de sistema",
+			Code:     9001,
+		}})
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx.SetValue("language", "pt")
+		err = messageCatalog.GetErrorWithCtx(ctx.Ctx, 9001)
+		Expect(err.Error()).To(Equal("Mensagem curta de sistema"))
 	})
 
 	It("should allow to load system messages between 9000-9999", func() {

@@ -64,10 +64,18 @@ func (dmc *DefaultMessageCatalog) loadFromYaml() error {
 }
 
 func (dmc *DefaultMessageCatalog) LoadMessages(lang string, messages []RawMessage) error {
+	if dmc.messages == nil {
+		dmc.messages = map[string]Messages{}
+	}
 	if _, foundLangMsg := dmc.messages[lang]; !foundLangMsg {
-		dmc.messages[lang] = Messages{}
+		dmc.messages[lang] = Messages{
+			Set: map[int]RawMessage{},
+		}
 	}
 	langMsgSet := dmc.messages[lang]
+	if langMsgSet.Set == nil {
+		langMsgSet.Set = map[int]RawMessage{}
+	}
 	for _, message := range messages {
 		if message.Code < 9000 || message.Code > 9999 {
 			return fmt.Errorf("application messages should be loaded using YAML file, allowed range only between 9000 and 9999")
@@ -80,16 +88,22 @@ func (dmc *DefaultMessageCatalog) LoadMessages(lang string, messages []RawMessag
 			Code:     message.Code,
 		}
 	}
+	dmc.messages[lang] = langMsgSet
 
 	return nil
 }
 
 func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) *Message {
-	lang := ctx.Value(dmc.cfg.CtxLanguageKey)
-	if lang == nil {
-		lang = "en"
+	lang := "en"
+	if ctx != nil {
+		// Keep backward compatibility with callers that used plain string keys.
+		if langKeyVal := ctx.Value(dmc.cfg.CtxLanguageKey); langKeyVal != nil {
+			lang = fmt.Sprintf("%v", langKeyVal)
+		} else if langKeyVal := ctx.Value(string(dmc.cfg.CtxLanguageKey)); langKeyVal != nil {
+			lang = fmt.Sprintf("%v", langKeyVal)
+		}
 	}
-	if langMsgSet, foundLangMsg := dmc.messages[lang.(string)]; foundLangMsg {
+	if langMsgSet, foundLangMsg := dmc.messages[lang]; foundLangMsg {
 		shortMessage := langMsgSet.Default.ShortTpl
 		longMessage := langMsgSet.Default.LongTpl
 		code := 999999998

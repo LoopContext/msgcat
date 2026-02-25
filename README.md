@@ -16,7 +16,7 @@ this is specially good for i18n on APIs :)
 ### go get msgcat onto your project
 
 ```bash
-go get github.com/LoopContext/msgcat
+go get github.com/loopcontext/msgcat
 ```
 
 ### Create the resource files
