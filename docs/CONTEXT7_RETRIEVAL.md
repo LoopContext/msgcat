@@ -130,8 +130,8 @@ func Close(catalog MessageCatalog) error
 const (
   SystemMessageMinCode = 9000
   SystemMessageMaxCode = 9999
-  CodeMissingMessage   = 999999998
-  CodeMissingLanguage  = 99999999
+  CodeMissingMessage   = 999999002
+  CodeMissingLanguage  = 999999001
 )
 ```
 
