@@ -27,6 +27,8 @@ type MessageCatalogStats struct {
 	MissingLanguages  map[string]int
 	MissingMessages   map[string]int
 	TemplateIssues    map[string]int
+	DroppedEvents     map[string]int
+	LastReloadAt      time.Time
 }
 
 type Observer interface {
@@ -43,5 +45,9 @@ type Config struct {
 	FallbackLanguages []string
 	StrictTemplates   bool
 	Observer          Observer
+	ObserverBuffer    int
+	StatsMaxKeys      int
+	ReloadRetries     int
+	ReloadRetryDelay  time.Duration
 	NowFn             func() time.Time
 }

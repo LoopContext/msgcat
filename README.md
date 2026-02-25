@@ -61,6 +61,10 @@ catalog, err := msgcat.NewMessageCatalog(msgcat.Config{
   DefaultLanguage:   "en",
   FallbackLanguages: []string{"es"},
   StrictTemplates:   true,
+  ObserverBuffer:    1024,
+  StatsMaxKeys:      512,
+  ReloadRetries:     2,
+  ReloadRetryDelay:  50 * time.Millisecond,
 })
 if err != nil {
   panic(err)
@@ -138,6 +142,8 @@ if err == nil {
   _ = stats.MissingLanguages
   _ = stats.MissingMessages
   _ = stats.TemplateIssues
+  _ = stats.DroppedEvents
+  _ = stats.LastReloadAt
 }
 ```
 
@@ -146,8 +152,11 @@ if err == nil {
 - Keep `DefaultLanguage` explicit (`en` recommended).
 - Define `FallbackLanguages` intentionally (for example for regional traffic).
 - Use `StrictTemplates: true` in production to detect bad template usage early.
+- Set `ObserverBuffer` to avoid request-path pressure from slow observers.
+- Set `StatsMaxKeys` to cap cardinality (`__overflow__` key holds overflow counts).
 - Use `go test -race ./...` in CI.
-- For periodic YAML refresh, call `msgcat.Reload(catalog)` in a controlled goroutine.
+- For periodic YAML refresh, call `msgcat.Reload(catalog)` in a controlled goroutine and prefer atomic file replacement (`write temp + rename`).
+- Use `ReloadRetries` and `ReloadRetryDelay` to reduce transient parse/read errors during rollout windows.
 
 ## Benchmarks
 
@@ -159,4 +168,5 @@ go test -run ^$ -bench . -benchmem ./...
 
 ## Context7 / LLM Docs
 
-For full machine-friendly docs, see `CONTEXT7.md`.
+For full machine-friendly docs, see `docs/CONTEXT7.md`.
+For retrieval-optimized chunks, see `docs/CONTEXT7_RETRIEVAL.md`.

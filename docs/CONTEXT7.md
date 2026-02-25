@@ -63,6 +63,10 @@ type Config struct {
   FallbackLanguages []string
   StrictTemplates   bool
   Observer          Observer
+  ObserverBuffer    int
+  StatsMaxKeys      int
+  ReloadRetries     int
+  ReloadRetryDelay  time.Duration
   NowFn             func() time.Time
 }
 ```
@@ -74,6 +78,9 @@ Field behavior:
 - `FallbackLanguages`: extra ordered fallback list after requested/base language.
 - `StrictTemplates`: if true, missing placeholder params are replaced by `<missing:n>` and counted as issues.
 - `Observer`: optional hook receiver for fallback/miss/template events.
+- `ObserverBuffer`: async observer queue size. Overflow is dropped and counted.
+- `StatsMaxKeys`: max keys per stats map, overflow grouped under `__overflow__`.
+- `ReloadRetries` / `ReloadRetryDelay`: retry strategy for transient reload parse/read errors.
 - `NowFn`: injectable clock function. Default: `time.Now`.
 
 ### `type Message struct`
@@ -104,6 +111,8 @@ type MessageCatalogStats struct {
   MissingLanguages  map[string]int
   MissingMessages   map[string]int
   TemplateIssues    map[string]int
+  DroppedEvents     map[string]int
+  LastReloadAt      time.Time
 }
 ```
 
@@ -142,6 +151,8 @@ type MessageCatalog interface {
 ```go
 func Reload(catalog MessageCatalog) error
 func SnapshotStats(catalog MessageCatalog) (MessageCatalogStats, error)
+func ResetStats(catalog MessageCatalog) error
+func Close(catalog MessageCatalog) error
 ```
 
 Notes:
@@ -246,6 +257,7 @@ Accepted date params:
 - re-reads YAML files from `ResourcePath`
 - validates and normalizes files
 - preserves runtime-loaded messages
+- retries based on `ReloadRetries` and `ReloadRetryDelay`
 
 ## 13. Concurrency Guarantees
 
@@ -265,8 +277,11 @@ Race tests pass with `go test -race ./...`.
 - `MissingLanguages`: keyed by requested language
 - `MissingMessages`: keyed as `"lang:code"`
 - `TemplateIssues`: keyed as `"lang:code:issue"`
+- `DroppedEvents`: internal drop counters (for example observer queue overflow)
+- `LastReloadAt`: timestamp set using `Config.NowFn`
 
-Observer hooks are synchronous callbacks invoked on those events.
+Observer hooks are dispatched asynchronously through a bounded queue.
+Panics inside observer callbacks are recovered to protect request path.
 
 ## 15. Performance Notes
 
@@ -333,4 +348,3 @@ go test ./...
 go test -race ./...
 go test -run ^$ -bench . -benchmem ./...
 ```
-

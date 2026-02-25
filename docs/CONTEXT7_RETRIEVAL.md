@@ -26,6 +26,10 @@ type Config struct {
   FallbackLanguages []string
   StrictTemplates   bool
   Observer          Observer
+  ObserverBuffer    int
+  StatsMaxKeys      int
+  ReloadRetries     int
+  ReloadRetryDelay  time.Duration
   NowFn             func() time.Time
 }
 ```
@@ -33,6 +37,10 @@ Defaults:
 - `ResourcePath`: `./resources/messages`
 - `CtxLanguageKey`: `"language"`
 - `DefaultLanguage`: `"en"`
+- `ObserverBuffer`: `1024`
+- `StatsMaxKeys`: `512`
+- `ReloadRetries`: `0`
+- `ReloadRetryDelay`: `50ms`
 - `NowFn`: `time.Now`
 
 ## C04_YAML_SCHEMA
@@ -113,6 +121,8 @@ type MessageCatalog interface {
 func NewMessageCatalog(cfg Config) (MessageCatalog, error)
 func Reload(catalog MessageCatalog) error
 func SnapshotStats(catalog MessageCatalog) (MessageCatalogStats, error)
+func ResetStats(catalog MessageCatalog) error
+func Close(catalog MessageCatalog) error
 ```
 
 ## C09_CODES_AND_CONSTANTS
@@ -140,6 +150,7 @@ Semantics:
 - re-reads YAML from `ResourcePath`
 - re-validates and normalizes
 - merges/preserves runtime-loaded messages
+- retries according to `ReloadRetries` + `ReloadRetryDelay`
 
 ## C12_OBSERVABILITY
 Observer hooks:
@@ -159,6 +170,8 @@ type MessageCatalogStats struct {
   MissingLanguages  map[string]int // "lang"
   MissingMessages   map[string]int // "lang:code"
   TemplateIssues    map[string]int // "lang:code:issue"
+  DroppedEvents     map[string]int // internal drop counters
+  LastReloadAt      time.Time
 }
 ```
 
@@ -167,6 +180,7 @@ Concurrency safety via RW mutex:
 - Safe concurrent reads (`GetMessageWithCtx`, error helpers)
 - Safe concurrent writes (`LoadMessages`, `Reload`)
 - Safe stat snapshots
+- Observer callbacks run asynchronously and are panic-protected.
 
 Validated with `go test -race ./...`.
 

@@ -22,6 +22,7 @@ const (
 	SystemMessageMaxCode = 9999
 	CodeMissingMessage   = 999999998
 	CodeMissingLanguage  = 99999999
+	overflowStatKey      = "__overflow__"
 )
 
 var (
@@ -39,12 +40,44 @@ type MessageCatalog interface {
 	GetErrorWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) error
 }
 
+type observerEventType int
+
+const (
+	observerEventLanguageFallback observerEventType = iota
+	observerEventLanguageMissing
+	observerEventMessageMissing
+	observerEventTemplateIssue
+)
+
+type observerEvent struct {
+	kind          observerEventType
+	requested     string
+	resolved      string
+	lang          string
+	msgCode       int
+	templateIssue string
+}
+
 type catalogStats struct {
 	mu                sync.Mutex
 	languageFallbacks map[string]int
 	missingLanguages  map[string]int
 	missingMessages   map[string]int
 	templateIssues    map[string]int
+	droppedEvents     map[string]int
+	maxKeys           int
+	lastReloadAt      time.Time
+}
+
+func sanitizeStatKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "unknown"
+	}
+	if len(key) > 120 {
+		return key[:120]
+	}
+	return key
 }
 
 func (s *catalogStats) increment(target map[string]int, key string) {
@@ -52,6 +85,18 @@ func (s *catalogStats) increment(target map[string]int, key string) {
 	defer s.mu.Unlock()
 	if target == nil {
 		return
+	}
+	key = sanitizeStatKey(key)
+	if s.maxKeys > 0 {
+		if _, exists := target[key]; !exists {
+			if _, hasOverflow := target[overflowStatKey]; hasOverflow {
+				if len(target) >= s.maxKeys {
+					key = overflowStatKey
+				}
+			} else if len(target) >= s.maxKeys-1 {
+				key = overflowStatKey
+			}
+		}
 	}
 	target[key]++
 }
@@ -61,7 +106,7 @@ func (s *catalogStats) incrementLanguageFallback(requestedLang string, resolvedL
 }
 
 func (s *catalogStats) incrementMissingLanguage(lang string) {
-	s.increment(s.missingLanguages, lang)
+	s.increment(s.missingLanguages, normalizeLangTag(lang))
 }
 
 func (s *catalogStats) incrementMissingMessage(lang string, msgCode int) {
@@ -70,6 +115,27 @@ func (s *catalogStats) incrementMissingMessage(lang string, msgCode int) {
 
 func (s *catalogStats) incrementTemplateIssue(lang string, msgCode int, issue string) {
 	s.increment(s.templateIssues, fmt.Sprintf("%s:%d:%s", lang, msgCode, issue))
+}
+
+func (s *catalogStats) incrementDroppedEvent(reason string) {
+	s.increment(s.droppedEvents, reason)
+}
+
+func (s *catalogStats) setLastReloadAt(t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastReloadAt = t
+}
+
+func (s *catalogStats) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.languageFallbacks = map[string]int{}
+	s.missingLanguages = map[string]int{}
+	s.missingMessages = map[string]int{}
+	s.templateIssues = map[string]int{}
+	s.droppedEvents = map[string]int{}
+	s.lastReloadAt = time.Time{}
 }
 
 func (s *catalogStats) snapshot() MessageCatalogStats {
@@ -89,6 +155,8 @@ func (s *catalogStats) snapshot() MessageCatalogStats {
 		MissingLanguages:  copyMap(s.missingLanguages),
 		MissingMessages:   copyMap(s.missingMessages),
 		TemplateIssues:    copyMap(s.templateIssues),
+		DroppedEvents:     copyMap(s.droppedEvents),
+		LastReloadAt:      s.lastReloadAt,
 	}
 }
 
@@ -98,6 +166,8 @@ type DefaultMessageCatalog struct {
 	runtimeMessages map[string]map[int]RawMessage
 	cfg             Config
 	stats           catalogStats
+	observerCh      chan observerEvent
+	observerDone    chan struct{}
 }
 
 type MessageParams struct {
@@ -141,8 +211,33 @@ func (dmc *DefaultMessageCatalog) readMessagesFromYaml() (map[string]Messages, e
 	return messageByLang, nil
 }
 
+func (dmc *DefaultMessageCatalog) readMessagesFromYamlWithRetry() (map[string]Messages, error) {
+	retries := dmc.cfg.ReloadRetries
+	if retries < 0 {
+		retries = 0
+	}
+	delay := dmc.cfg.ReloadRetryDelay
+	if delay <= 0 {
+		delay = 50 * time.Millisecond
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		messageByLang, err := dmc.readMessagesFromYaml()
+		if err == nil {
+			return messageByLang, nil
+		}
+		lastErr = err
+		if attempt < retries {
+			time.Sleep(delay)
+		}
+	}
+
+	return nil, lastErr
+}
+
 func (dmc *DefaultMessageCatalog) loadFromYaml() error {
-	messageByLang, err := dmc.readMessagesFromYaml()
+	messageByLang, err := dmc.readMessagesFromYamlWithRetry()
 	if err != nil {
 		return err
 	}
@@ -165,6 +260,7 @@ func (dmc *DefaultMessageCatalog) loadFromYaml() error {
 		}
 	}
 	dmc.messages = messageByLang
+	dmc.stats.setLastReloadAt(dmc.cfg.NowFn())
 
 	return nil
 }
@@ -340,32 +436,104 @@ func formatDateByLang(lang string, value interface{}) (string, bool) {
 	return date.Format(layout), true
 }
 
+func safeObserverCall(fn func()) {
+	defer func() {
+		_ = recover()
+	}()
+	fn()
+}
+
+func (dmc *DefaultMessageCatalog) startObserverWorker() {
+	if dmc.cfg.Observer == nil || dmc.observerCh != nil {
+		return
+	}
+	dmc.observerCh = make(chan observerEvent, dmc.cfg.ObserverBuffer)
+	dmc.observerDone = make(chan struct{})
+	go func() {
+		defer close(dmc.observerDone)
+		for evt := range dmc.observerCh {
+			switch evt.kind {
+			case observerEventLanguageFallback:
+				safeObserverCall(func() {
+					dmc.cfg.Observer.OnLanguageFallback(evt.requested, evt.resolved)
+				})
+			case observerEventLanguageMissing:
+				safeObserverCall(func() {
+					dmc.cfg.Observer.OnLanguageMissing(evt.lang)
+				})
+			case observerEventMessageMissing:
+				safeObserverCall(func() {
+					dmc.cfg.Observer.OnMessageMissing(evt.lang, evt.msgCode)
+				})
+			case observerEventTemplateIssue:
+				safeObserverCall(func() {
+					dmc.cfg.Observer.OnTemplateIssue(evt.lang, evt.msgCode, evt.templateIssue)
+				})
+			}
+		}
+	}()
+}
+
+func (dmc *DefaultMessageCatalog) stopObserverWorker() {
+	if dmc.observerCh == nil {
+		return
+	}
+	close(dmc.observerCh)
+	<-dmc.observerDone
+	dmc.observerCh = nil
+	dmc.observerDone = nil
+}
+
+func (dmc *DefaultMessageCatalog) publishObserverEvent(evt observerEvent) {
+	if dmc.cfg.Observer == nil || dmc.observerCh == nil {
+		return
+	}
+	defer func() {
+		if recover() != nil {
+			dmc.stats.incrementDroppedEvent("observer_closed")
+		}
+	}()
+	select {
+	case dmc.observerCh <- evt:
+	default:
+		dmc.stats.incrementDroppedEvent("observer_queue_full")
+	}
+}
+
 func (dmc *DefaultMessageCatalog) onLanguageFallback(requestedLang string, resolvedLang string) {
 	dmc.stats.incrementLanguageFallback(requestedLang, resolvedLang)
-	if dmc.cfg.Observer != nil {
-		dmc.cfg.Observer.OnLanguageFallback(requestedLang, resolvedLang)
-	}
+	dmc.publishObserverEvent(observerEvent{
+		kind:      observerEventLanguageFallback,
+		requested: requestedLang,
+		resolved:  resolvedLang,
+	})
 }
 
 func (dmc *DefaultMessageCatalog) onLanguageMissing(lang string) {
 	dmc.stats.incrementMissingLanguage(lang)
-	if dmc.cfg.Observer != nil {
-		dmc.cfg.Observer.OnLanguageMissing(lang)
-	}
+	dmc.publishObserverEvent(observerEvent{
+		kind: observerEventLanguageMissing,
+		lang: lang,
+	})
 }
 
 func (dmc *DefaultMessageCatalog) onMessageMissing(lang string, msgCode int) {
 	dmc.stats.incrementMissingMessage(lang, msgCode)
-	if dmc.cfg.Observer != nil {
-		dmc.cfg.Observer.OnMessageMissing(lang, msgCode)
-	}
+	dmc.publishObserverEvent(observerEvent{
+		kind:    observerEventMessageMissing,
+		lang:    lang,
+		msgCode: msgCode,
+	})
 }
 
 func (dmc *DefaultMessageCatalog) onTemplateIssue(lang string, msgCode int, issue string) {
 	dmc.stats.incrementTemplateIssue(lang, msgCode, issue)
-	if dmc.cfg.Observer != nil {
-		dmc.cfg.Observer.OnTemplateIssue(lang, msgCode, issue)
-	}
+	dmc.publishObserverEvent(observerEvent{
+		kind:          observerEventTemplateIssue,
+		lang:          lang,
+		msgCode:       msgCode,
+		templateIssue: issue,
+	})
 }
 
 func (dmc *DefaultMessageCatalog) resolveRequestedLang(ctx context.Context) string {
@@ -626,6 +794,16 @@ func (dmc *DefaultMessageCatalog) SnapshotStats() MessageCatalogStats {
 	return dmc.stats.snapshot()
 }
 
+func (dmc *DefaultMessageCatalog) ResetStats() {
+	dmc.stats.reset()
+}
+
+func (dmc *DefaultMessageCatalog) Close() {
+	dmc.mu.Lock()
+	defer dmc.mu.Unlock()
+	dmc.stopObserverWorker()
+}
+
 func Reload(catalog MessageCatalog) error {
 	reloadable, ok := catalog.(interface{ Reload() error })
 	if !ok {
@@ -642,6 +820,24 @@ func SnapshotStats(catalog MessageCatalog) (MessageCatalogStats, error) {
 	return statsProvider.SnapshotStats(), nil
 }
 
+func ResetStats(catalog MessageCatalog) error {
+	statsProvider, ok := catalog.(interface{ ResetStats() })
+	if !ok {
+		return fmt.Errorf("catalog does not support stats reset")
+	}
+	statsProvider.ResetStats()
+	return nil
+}
+
+func Close(catalog MessageCatalog) error {
+	closer, ok := catalog.(interface{ Close() })
+	if !ok {
+		return fmt.Errorf("catalog does not support close")
+	}
+	closer.Close()
+	return nil
+}
+
 func NewMessageCatalog(cfg Config) (MessageCatalog, error) {
 	if cfg.CtxLanguageKey == "" {
 		cfg.CtxLanguageKey = "language"
@@ -652,6 +848,18 @@ func NewMessageCatalog(cfg Config) (MessageCatalog, error) {
 	if cfg.NowFn == nil {
 		cfg.NowFn = time.Now
 	}
+	if cfg.ObserverBuffer <= 0 {
+		cfg.ObserverBuffer = 1024
+	}
+	if cfg.StatsMaxKeys <= 0 {
+		cfg.StatsMaxKeys = 512
+	}
+	if cfg.ReloadRetries < 0 {
+		cfg.ReloadRetries = 0
+	}
+	if cfg.ReloadRetryDelay <= 0 {
+		cfg.ReloadRetryDelay = 50 * time.Millisecond
+	}
 
 	dmc := DefaultMessageCatalog{
 		cfg: cfg,
@@ -660,9 +868,14 @@ func NewMessageCatalog(cfg Config) (MessageCatalog, error) {
 			missingLanguages:  map[string]int{},
 			missingMessages:   map[string]int{},
 			templateIssues:    map[string]int{},
+			droppedEvents:     map[string]int{},
+			maxKeys:           cfg.StatsMaxKeys,
 		},
 	}
 	err := dmc.loadFromYaml()
+	if err == nil {
+		dmc.startObserverWorker()
+	}
 
 	return &dmc, err
 }

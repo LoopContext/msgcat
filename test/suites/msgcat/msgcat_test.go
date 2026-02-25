@@ -24,6 +24,26 @@ type mockObserver struct {
 	templateIssues []string
 }
 
+type panicObserver struct{}
+
+func (panicObserver) OnLanguageFallback(requestedLang string, resolvedLang string) {
+	panic("observer panic")
+}
+func (panicObserver) OnLanguageMissing(lang string)                          { panic("observer panic") }
+func (panicObserver) OnMessageMissing(lang string, msgCode int)              { panic("observer panic") }
+func (panicObserver) OnTemplateIssue(lang string, msgCode int, issue string) { panic("observer panic") }
+
+type slowObserver struct {
+	delay time.Duration
+}
+
+func (o slowObserver) OnLanguageFallback(requestedLang string, resolvedLang string) {}
+func (o slowObserver) OnLanguageMissing(lang string)                                {}
+func (o slowObserver) OnMessageMissing(lang string, msgCode int) {
+	time.Sleep(o.delay)
+}
+func (o slowObserver) OnTemplateIssue(lang string, msgCode int, issue string) {}
+
 func (o *mockObserver) OnLanguageFallback(requestedLang string, resolvedLang string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -226,7 +246,11 @@ var _ = Describe("Message Catalog", func() {
 		stats, err := msgcat.SnapshotStats(strictCatalog)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(len(stats.TemplateIssues)).To(BeNumerically(">", 0))
-		Expect(len(observer.templateIssues)).To(BeNumerically(">", 0))
+		Eventually(func() int {
+			observer.mu.Lock()
+			defer observer.mu.Unlock()
+			return len(observer.templateIssues)
+		}, 500*time.Millisecond, 10*time.Millisecond).Should(BeNumerically(">", 0))
 	})
 
 	It("should reload yaml changes and keep runtime loaded messages", func() {
@@ -281,8 +305,112 @@ var _ = Describe("Message Catalog", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(len(stats.LanguageFallbacks)).To(BeNumerically(">", 0))
 		Expect(len(stats.MissingMessages)).To(BeNumerically(">", 0))
-		Expect(strings.Join(observer.fallbacks, ",")).To(ContainSubstring("es-mx->es"))
-		Expect(len(observer.missingCodes)).To(BeNumerically(">", 0))
+		Eventually(func() string {
+			observer.mu.Lock()
+			defer observer.mu.Unlock()
+			return strings.Join(observer.fallbacks, ",")
+		}, 500*time.Millisecond, 10*time.Millisecond).Should(ContainSubstring("es-mx->es"))
+		Eventually(func() int {
+			observer.mu.Lock()
+			defer observer.mu.Unlock()
+			return len(observer.missingCodes)
+		}, 500*time.Millisecond, 10*time.Millisecond).Should(BeNumerically(">", 0))
+	})
+
+	It("should keep observer failures from crashing request path", func() {
+		catalogWithPanickingObserver, err := msgcat.NewMessageCatalog(msgcat.Config{
+			ResourcePath: "./resources/messages",
+			Observer:     panicObserver{},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer msgcat.Close(catalogWithPanickingObserver)
+
+		ctx.SetValue("language", "es-MX")
+		msg := catalogWithPanickingObserver.GetMessageWithCtx(ctx.Ctx, 404)
+		Expect(msg).NotTo(BeNil())
+	})
+
+	It("should not block request path on slow observer", func() {
+		catalogWithSlowObserver, err := msgcat.NewMessageCatalog(msgcat.Config{
+			ResourcePath:   "./resources/messages",
+			Observer:       slowObserver{delay: 150 * time.Millisecond},
+			ObserverBuffer: 1,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer msgcat.Close(catalogWithSlowObserver)
+
+		start := time.Now()
+		msg := catalogWithSlowObserver.GetMessageWithCtx(ctx.Ctx, 404)
+		elapsed := time.Since(start)
+		Expect(msg).NotTo(BeNil())
+		Expect(elapsed).To(BeNumerically("<", 80*time.Millisecond))
+	})
+
+	It("should cap stats cardinality and reset counters", func() {
+		tmpDir, err := os.MkdirTemp("", "msgcat-empty-*")
+		Expect(err).NotTo(HaveOccurred())
+		defer os.RemoveAll(tmpDir)
+
+		emptyCatalog, err := msgcat.NewMessageCatalog(msgcat.Config{
+			ResourcePath: tmpDir,
+			StatsMaxKeys: 2,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer msgcat.Close(emptyCatalog)
+
+		langs := []string{"aa", "bb", "cc", "dd"}
+		for _, lang := range langs {
+			ctx.SetValue("language", lang)
+			_ = emptyCatalog.GetMessageWithCtx(ctx.Ctx, 1)
+		}
+
+		stats, err := msgcat.SnapshotStats(emptyCatalog)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(len(stats.MissingLanguages)).To(BeNumerically("<=", 2))
+		Expect(stats.MissingLanguages).To(HaveKey("__overflow__"))
+
+		err = msgcat.ResetStats(emptyCatalog)
+		Expect(err).NotTo(HaveOccurred())
+		stats, err = msgcat.SnapshotStats(emptyCatalog)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(len(stats.MissingLanguages)).To(Equal(0))
+		Expect(len(stats.MissingMessages)).To(Equal(0))
+	})
+
+	It("should apply now function timestamp and reload retries", func() {
+		tmpDir, err := os.MkdirTemp("", "msgcat-retry-*")
+		Expect(err).NotTo(HaveOccurred())
+		defer os.RemoveAll(tmpDir)
+
+		initial := []byte("group: 0\ndefault:\n  short: Init\n  long: Init\nset:\n  1:\n    short: before\n")
+		err = os.WriteFile(filepath.Join(tmpDir, "en.yaml"), initial, 0o600)
+		Expect(err).NotTo(HaveOccurred())
+
+		fixedTime := time.Date(2026, time.February, 25, 12, 30, 0, 0, time.UTC)
+		catalogWithRetry, err := msgcat.NewMessageCatalog(msgcat.Config{
+			ResourcePath:     tmpDir,
+			NowFn:            func() time.Time { return fixedTime },
+			ReloadRetries:    2,
+			ReloadRetryDelay: 20 * time.Millisecond,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer msgcat.Close(catalogWithRetry)
+
+		err = os.WriteFile(filepath.Join(tmpDir, "en.yaml"), []byte("invalid: ["), 0o600)
+		Expect(err).NotTo(HaveOccurred())
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			_ = os.WriteFile(filepath.Join(tmpDir, "en.yaml"), []byte("group: 0\ndefault:\n  short: Init\n  long: Init\nset:\n  1:\n    short: after\n"), 0o600)
+		}()
+
+		err = msgcat.Reload(catalogWithRetry)
+		Expect(err).NotTo(HaveOccurred())
+		msg := catalogWithRetry.GetMessageWithCtx(ctx.Ctx, 1)
+		Expect(msg.ShortText).To(Equal("after"))
+
+		stats, err := msgcat.SnapshotStats(catalogWithRetry)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stats.LastReloadAt).To(Equal(fixedTime))
 	})
 
 	It("should be safe under concurrent reads and writes", func() {
