@@ -112,7 +112,9 @@ func runMerge(cfg *mergeConfig) error {
 		}
 		for key, srcEntry := range source.Set {
 			dstEntry := target.Set[key]
-			if dstEntry.ShortTpl != "" && dstEntry.LongTpl != "" {
+			hasTpl := dstEntry.ShortTpl != "" && dstEntry.LongTpl != ""
+			hasForms := len(dstEntry.ShortForms) > 0 || len(dstEntry.LongForms) > 0
+			if hasTpl || hasForms {
 				merged.Set[key] = dstEntry
 			} else {
 				entry := msgcat.RawMessage{

@@ -837,9 +837,12 @@ func (dmc *DefaultMessageCatalog) LoadMessages(lang string, messages []RawMessag
 			return fmt.Errorf("message with key %q already exists in message set for language %s", key, normalizedLang)
 		}
 		normalizedMessage := RawMessage{
-			LongTpl:  message.LongTpl,
-			ShortTpl: message.ShortTpl,
-			Code:     message.Code,
+			LongTpl:     message.LongTpl,
+			ShortTpl:    message.ShortTpl,
+			Code:        message.Code,
+			ShortForms:  message.ShortForms,
+			LongForms:   message.LongForms,
+			PluralParam: message.PluralParam,
 		}
 		langMsgSet.Set[key] = normalizedMessage
 		dmc.runtimeMessages[normalizedLang][key] = normalizedMessage

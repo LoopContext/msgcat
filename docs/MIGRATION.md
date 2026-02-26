@@ -90,3 +90,11 @@ If you are moving from numeric message codes and positional template parameters 
 - **LoadMessages** — Each message must have `Key` with prefix `sys.` (e.g. `sys.alert`). No numeric code range; use `Code: msgcat.CodeInt(9001)` or `Code: msgcat.CodeString("SYS_LOADED")` if you need a code.
 - **Observer** — `OnMessageMissing(lang, msgKey string)` and `OnTemplateIssue(lang, msgKey string, issue string)` now take string `msgKey` instead of `msgCode int`.
 - **YAML** — Remove `group`. Use string keys under `set:` and optional `code` per entry. See README and `docs/CONVERSION_PLAN.md`.
+
+## 10) New optional features (no migration required)
+
+The following are additive and optional. Existing YAML and code keep working as-is.
+
+- **Optional group** — You can add top-level `group: 0` or `group: "api"` to message files. The catalog does not interpret it; it is for organization and tooling. Omit if you do not use it.
+- **CLDR plural forms** — You can add `short_forms` / `long_forms` (maps: zero, one, two, few, many, other) and optional `plural_param` per entry for languages that need more than two plural forms. If you only use `short` / `long` and `{{plural:count|singular|plural}}`, no change needed.
+- **MessageDef and CLI** — You can define messages in Go with `msgcat.MessageDef` and run `msgcat extract -source en.yaml -out en.yaml .` to merge them into YAML. Optional; at runtime the catalog still loads from YAML.

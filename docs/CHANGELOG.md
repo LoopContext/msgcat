@@ -13,6 +13,14 @@ This project follows Semantic Versioning.
 - CLI **extract** (keys from GetMessageWithCtx/WrapErrorWithCtx/GetErrorWithCtx; sync to YAML with MessageDef merge) and **merge** (translate.\<lang\>.yaml with group and plural fields copied).
 - Examples: `cldr_plural`, `msgdef`. Docs: CLI_WORKFLOW_PLAN, CLDR_AND_GO_MESSAGES_PLAN.
 - String message keys (e.g. `"greeting.hello"`) instead of numeric codes for lookup.
+
+### Fixed
+- **LoadMessages** now preserves `ShortForms`, `LongForms`, and `PluralParam` on runtime-loaded messages.
+- **Merge** now treats a target entry as translated when it has either `short`/`long` or `short_forms`/`long_forms`, so forms-only translations are kept.
+
+### Changed
+- **CI** uses Go 1.26 (matches go.mod) and builds `./cmd/...` (msgcat CLI).
+- **MIGRATION** §10 added: optional group, CLDR forms, MessageDef (no migration required).
 - Named template parameters: `{{name}}`, `{{plural:count|...}}`, `{{num:amount}}`, `{{date:when}}` with `msgcat.Params`.
 - Optional string `code` field: any value (e.g. `"404"`, `"ERR_NOT_FOUND"`); not unique. YAML accepts `code: 404` or `code: "ERR_001"`. Helpers `CodeInt()`, `CodeString()`.
 - `Message.Key` and `ErrorKey()` for API identifier when code is empty.

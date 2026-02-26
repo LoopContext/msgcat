@@ -76,3 +76,40 @@ set:
 		t.Errorf("short: got %q", msg.ShortText)
 	}
 }
+
+func TestLoadMessages_preservesShortFormsLongFormsPluralParam(t *testing.T) {
+	dir := t.TempDir()
+	en := []byte(`default:
+  short: Err
+  long: Err
+set: {}
+`)
+	if err := os.WriteFile(filepath.Join(dir, "en.yaml"), en, 0644); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := NewMessageCatalog(Config{ResourcePath: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = catalog.LoadMessages("en", []RawMessage{{
+		Key:   "sys.cats",
+		ShortForms: map[string]string{"one": "{{name}} has {{n}} cat.", "other": "{{name}} has {{n}} cats."},
+		LongForms:  map[string]string{"one": "One cat.", "other": "{{n}} cats."},
+		PluralParam: "n",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(context.Background(), "language", "en")
+	msg1 := catalog.GetMessageWithCtx(ctx, "sys.cats", Params{"name": "Alice", "n": 1})
+	if msg1.ShortText != "Alice has 1 cat." {
+		t.Errorf("count=1 short: got %q", msg1.ShortText)
+	}
+	if msg1.LongText != "One cat." {
+		t.Errorf("count=1 long: got %q", msg1.LongText)
+	}
+	msg2 := catalog.GetMessageWithCtx(ctx, "sys.cats", Params{"name": "Alice", "n": 2})
+	if msg2.ShortText != "Alice has 2 cats." {
+		t.Errorf("count=2 short: got %q", msg2.ShortText)
+	}
+}
