@@ -2,7 +2,7 @@
 
 `msgcat` is a lightweight i18n message catalog for Go focused on APIs and error handling.
 
-It loads messages from YAML by language, resolves language from `context.Context`, supports runtime message loading for system codes (9000–9999), and can wrap domain errors with localized short/long messages.
+It loads messages from YAML by language (string keys), resolves language from `context.Context`, supports runtime message loading with a reserved `sys.` key prefix, uses named template parameters, and can wrap domain errors with localized short/long messages.
 
 **Maturity:** production-ready (`v1.x`) with SemVer and release/migration docs in `docs/`.
 
@@ -32,40 +32,40 @@ One YAML file per language (e.g. `en.yaml`, `es.yaml`). Structure:
 
 | Field     | Description |
 |----------|-------------|
-| `group`  | Optional numeric group (e.g. `0`). |
-| `default`| Used when a message code is missing: `short` and `long` templates. |
-| `set`    | Map of message code → `short` / `long` template strings. |
+| `default`| Used when a message key is missing: `short` and `long` templates. |
+| `set`    | Map of string message key → entry with optional `code`, `short`, `long`. Keys use `[a-zA-Z0-9_.-]+` (e.g. `greeting.hello`, `error.not_found`). |
+
+Templates use **named parameters**: `{{name}}`, `{{plural:count\|singular\|plural}}`, `{{num:amount}}`, `{{date:when}}`.
 
 Example `en.yaml`:
 
 ```yaml
-group: 0
 default:
   short: Unexpected error
-  long: Unexpected message code [{{0}}] was received and was not found in this catalog
+  long: Unexpected message was received and was not found in this catalog
 set:
-  1:
+  greeting.hello:
+    code: 1
     short: User created
-    long: User {{0}} was created successfully
-  2:
-    short: You have {{0}} {{plural:0|item|items}}
-    long: Total: {{num:1}} generated at {{date:2}}
+    long: User {{name}} was created successfully
+  items.count:
+    short: You have {{count}} {{plural:count|item|items}}
+    long: Total: {{num:amount}} generated at {{date:when}}
 ```
 
 Example `es.yaml`:
 
 ```yaml
-group: 0
 default:
   short: Error inesperado
-  long: Se recibió un código de mensaje inesperado [{{0}}] y no se encontró en el catálogo
+  long: Se recibió un mensaje inesperado y no se encontró en el catálogo
 set:
-  1:
+  greeting.hello:
     short: Usuario creado
-    long: Usuario {{0}} fue creado correctamente
-  2:
-    short: Tienes {{0}} {{plural:0|elemento|elementos}}
-    long: Total: {{num:1}} generado el {{date:2}}
+    long: Usuario {{name}} fue creado correctamente
+  items.count:
+    short: Tienes {{count}} {{plural:count|elemento|elementos}}
+    long: Total: {{num:amount}} generado el {{date:when}}
 ```
 
 ### 2. Initialize catalog
@@ -92,19 +92,20 @@ if err != nil {
 ```go
 ctx := context.WithValue(context.Background(), "language", "es-AR")
 
-msg := catalog.GetMessageWithCtx(ctx, 1, "juan")
+msg := catalog.GetMessageWithCtx(ctx, "greeting.hello", msgcat.Params{"name": "juan"})
 fmt.Println(msg.ShortText) // "Usuario creado"
 fmt.Println(msg.LongText)  // "Usuario juan fue creado correctamente"
-fmt.Println(msg.Code)     // 1
+fmt.Println(msg.Code)      // 1 (from YAML optional `code`)
 
-err := catalog.WrapErrorWithCtx(ctx, errors.New("db timeout"), 2, 3, 12345.5, time.Now())
+params := msgcat.Params{"count": 3, "amount": 12345.5, "when": time.Now()}
+err := catalog.WrapErrorWithCtx(ctx, errors.New("db timeout"), "items.count", params)
 fmt.Println(err.Error()) // localized short message
 
 if catErr, ok := err.(msgcat.Error); ok {
-  fmt.Println(catErr.ErrorCode())      // 2
+  fmt.Println(catErr.ErrorCode())
   fmt.Println(catErr.GetShortMessage())
   fmt.Println(catErr.GetLongMessage())
-  fmt.Println(catErr.Unwrap())         // original "db timeout"
+  fmt.Println(catErr.Unwrap()) // original "db timeout"
 }
 ```
 
@@ -170,15 +171,16 @@ All fields of `msgcat.Config`:
 
 | Method | Description |
 |--------|-------------|
-| `LoadMessages(lang string, messages []RawMessage) error` | Add or replace messages for a language. Only codes in 9000–9999 are allowed. |
-| `GetMessageWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) *Message` | Resolve message for the context language; never nil. |
-| `WrapErrorWithCtx(ctx context.Context, err error, msgCode int, msgParams ...interface{}) error` | Wrap an error with localized short/long text and message code. |
-| `GetErrorWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) error` | Build an error with localized short/long text (no inner error). |
+| `LoadMessages(lang string, messages []RawMessage) error` | Add or replace messages for a language. Each `RawMessage` must have `Key` with prefix `sys.` (e.g. `sys.alert`). |
+| `GetMessageWithCtx(ctx context.Context, msgKey string, params Params) *Message` | Resolve message for the context language; never nil. `params` can be nil. |
+| `WrapErrorWithCtx(ctx context.Context, err error, msgKey string, params Params) error` | Wrap an error with localized short/long text and message code. |
+| `GetErrorWithCtx(ctx context.Context, msgKey string, params Params) error` | Build an error with localized short/long text (no inner error). |
 
 ### Types
 
+- **`Params`** — `map[string]interface{}` for named template parameters (e.g. `msgcat.Params{"name": "juan"}`).
 - **`Message`** — `Code int`, `ShortText string`, `LongText string`.
-- **`RawMessage`** — `ShortTpl`, `LongTpl` (YAML: `short`, `long`); used in YAML and `LoadMessages`.
+- **`RawMessage`** — `Key` (required for `LoadMessages`), `ShortTpl`, `LongTpl` (YAML: `short`, `long`), optional `Code` (YAML: `code`).
 - **`msgcat.Error`** — `Error() string`, `Unwrap() error`, `ErrorCode() int`, `GetShortMessage() string`, `GetLongMessage() string`.
 
 ### Package-level helpers
@@ -195,9 +197,8 @@ All fields of `msgcat.Config`:
 
 | Constant | Value | Description |
 |----------|--------|-------------|
-| `SystemMessageMinCode` | 9000 | Min code for runtime-loaded system messages. |
-| `SystemMessageMaxCode` | 9999 | Max code for runtime-loaded system messages. |
-| `CodeMissingMessage`  | 999999002 | Code used when a message is missing in the catalog. |
+| `RuntimeKeyPrefix` | `"sys."` | Required prefix for message keys loaded via `LoadMessages`. |
+| `CodeMissingMessage`  | 999999002 | Code used when a message key is missing in the catalog. |
 | `CodeMissingLanguage` | 999999001 | Code used when the language is missing. |
 
 ## Observability
@@ -211,8 +212,8 @@ type Observer struct{}
 
 func (Observer) OnLanguageFallback(requested, resolved string) {}
 func (Observer) OnLanguageMissing(lang string)                 {}
-func (Observer) OnMessageMissing(lang string, msgCode int)      {}
-func (Observer) OnTemplateIssue(lang string, msgCode int, issue string) {}
+func (Observer) OnMessageMissing(lang string, msgKey string)   {}
+func (Observer) OnTemplateIssue(lang string, msgKey string, issue string) {}
 ```
 
 Callbacks are invoked **asynchronously** and are panic-protected. If the observer queue is full, events are dropped and counted in `MessageCatalogStats.DroppedEvents`. Call `msgcat.Close(catalog)` on shutdown when using an observer.
@@ -223,8 +224,8 @@ Callbacks are invoked **asynchronously** and are panic-protected. If the observe
 |-------|-------------|
 | `LanguageFallbacks` | Counts per `"requested->resolved"` language fallback. |
 | `MissingLanguages`  | Counts per missing language. |
-| `MissingMessages`   | Counts per `"lang:code"` missing message. |
-| `TemplateIssues`    | Counts per template issue key (e.g. `"lang:code:issue"`). |
+| `MissingMessages`   | Counts per `"lang:msgKey"` missing message. |
+| `TemplateIssues`    | Counts per template issue key (e.g. `"lang:msgKey:issue"`). |
 | `DroppedEvents`     | Counts per drop reason (e.g. `observer_queue_full`, `observer_closed`). |
 | `LastReloadAt`      | Time of last successful reload. |
 

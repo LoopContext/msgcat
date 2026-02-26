@@ -4,16 +4,20 @@ import "time"
 
 type ContextKey string
 
+// Params is the type for named template parameters. Use msgcat.Params{"name": value}.
+type Params map[string]interface{}
+
 type Messages struct {
-	Group   int                `yaml:"group"`
-	Default RawMessage         `yaml:"default"`
-	Set     map[int]RawMessage `yaml:"set"`
+	Default RawMessage              `yaml:"default"`
+	Set     map[string]RawMessage   `yaml:"set"`
 }
 
 type RawMessage struct {
 	LongTpl  string `yaml:"long"`
 	ShortTpl string `yaml:"short"`
-	Code     int
+	Code     int    `yaml:"code"`
+	// Key is set when loading via LoadMessages (runtime); YAML uses the map key as the message key.
+	Key string `yaml:"-"`
 }
 
 type Message struct {
@@ -34,8 +38,8 @@ type MessageCatalogStats struct {
 type Observer interface {
 	OnLanguageFallback(requestedLang string, resolvedLang string)
 	OnLanguageMissing(lang string)
-	OnMessageMissing(lang string, msgCode int)
-	OnTemplateIssue(lang string, msgCode int, issue string)
+	OnMessageMissing(lang string, msgKey string)
+	OnTemplateIssue(lang string, msgKey string, issue string)
 }
 
 type Config struct {

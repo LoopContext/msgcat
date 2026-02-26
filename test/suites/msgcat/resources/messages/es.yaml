@@ -1,11 +1,11 @@
-group: 0
 default:
   short: Error inesperado
   long: Se recibió un error inesperado y no se encontró en el catálogo!
 set:
-  1:
+  greeting.hello:
+    code: 1
     short: Hola, breve descripción
     long: Hola, descripción muy larga. Solo puedes verme en la página de detalles.
-  4:
-    short: "Tienes {{0}} {{plural:0|elemento|elementos}}"
-    long: "Total: {{num:1}} generado el {{date:2}}"
+  items.count:
+    short: "Tienes {{count}} {{plural:count|elemento|elementos}}"
+    long: "Total: {{num:amount}} generado el {{date:generatedAt}}"

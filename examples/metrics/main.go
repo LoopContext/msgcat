@@ -30,10 +30,10 @@ func (o *expvarObserver) OnLanguageFallback(requestedLang string, resolvedLang s
 func (o *expvarObserver) OnLanguageMissing(lang string) {
 	o.missingL.Add(lang, 1)
 }
-func (o *expvarObserver) OnMessageMissing(lang string, msgCode int) {
-	o.missingM.Add(lang, 1)
+func (o *expvarObserver) OnMessageMissing(lang string, msgKey string) {
+	o.missingM.Add(lang+":"+msgKey, 1)
 }
-func (o *expvarObserver) OnTemplateIssue(lang string, msgCode int, issue string) {
+func (o *expvarObserver) OnTemplateIssue(lang string, msgKey string, issue string) {
 	o.tplIssues.Add(issue, 1)
 }
 

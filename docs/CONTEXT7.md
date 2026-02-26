@@ -21,11 +21,11 @@ Primary goals:
 
 ## 3. Main Concepts
 
-- **Message catalog**: in-memory map of language -> message set loaded from YAML.
-- **Message code**: integer key resolved per language.
-- **Default message**: fallback template when code is missing for a language.
+- **Message catalog**: in-memory map of language -> message set (keyed by string) loaded from YAML.
+- **Message key**: string key (e.g. `greeting.hello`) resolved per language.
+- **Default message**: fallback template when key is missing for a language.
 - **Language fallback chain**: requested language falls back through deterministic candidates.
-- **Runtime system messages**: codes `9000-9999` can be injected from code.
+- **Runtime system messages**: messages with key prefix `sys.` can be injected via `LoadMessages`.
 
 ## 4. YAML Format
 
@@ -34,22 +34,23 @@ Each language file is named `<lang>.yaml`, for example `en.yaml`, `es.yaml`.
 ### Schema
 
 ```yaml
-group: 0
 default:
   short: string
   long: string
 set:
-  <code>:
+  <key>:   # string key, e.g. greeting.hello, error.not_found
+    code: int    # optional, for API/HTTP response
     short: string
     long: string
 ```
 
+Keys use `[a-zA-Z0-9_.-]+`. Templates use **named parameters**: `{{name}}`, `{{plural:count|singular|plural}}`, `{{num:amount}}`, `{{date:when}}`.
+
 ### Validation rules
 
-- `group >= 0`
 - `default.short` or `default.long` must be non-empty.
 - `set` can be omitted; it will be initialized empty.
-- each code in `set` must be `> 0`.
+- each key in `set` must be non-empty and match the key format.
 
 ## 5. Public Types
 
@@ -93,13 +94,22 @@ type Message struct {
 }
 ```
 
+### `type Params`
+
+```go
+type Params map[string]interface{}
+```
+
+Named template parameters. Use `msgcat.Params{"name": "juan", "count": 3}`.
+
 ### `type RawMessage struct`
 
 ```go
 type RawMessage struct {
   LongTpl  string `yaml:"long"`
   ShortTpl string `yaml:"short"`
-  Code     int
+  Code     int    `yaml:"code"`
+  Key      string `yaml:"-"`  // required when using LoadMessages; must have prefix sys.
 }
 ```
 
@@ -122,8 +132,8 @@ type MessageCatalogStats struct {
 type Observer interface {
   OnLanguageFallback(requestedLang string, resolvedLang string)
   OnLanguageMissing(lang string)
-  OnMessageMissing(lang string, msgCode int)
-  OnTemplateIssue(lang string, msgCode int, issue string)
+  OnMessageMissing(lang string, msgKey string)
+  OnTemplateIssue(lang string, msgKey string, issue string)
 }
 ```
 
@@ -140,11 +150,13 @@ func NewMessageCatalog(cfg Config) (MessageCatalog, error)
 ```go
 type MessageCatalog interface {
   LoadMessages(lang string, messages []RawMessage) error
-  GetMessageWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) *Message
-  WrapErrorWithCtx(ctx context.Context, err error, msgCode int, msgParams ...interface{}) error
-  GetErrorWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) error
+  GetMessageWithCtx(ctx context.Context, msgKey string, params Params) *Message
+  WrapErrorWithCtx(ctx context.Context, err error, msgKey string, params Params) error
+  GetErrorWithCtx(ctx context.Context, msgKey string, params Params) error
 }
 ```
+
+For `LoadMessages`, each `RawMessage` must have `Key` set with prefix `RuntimeKeyPrefix` (`"sys."`).
 
 ### Helper functions
 
@@ -163,10 +175,9 @@ Notes:
 
 ```go
 const (
-  SystemMessageMinCode = 9000
-  SystemMessageMaxCode = 9999
-  CodeMissingMessage   = 999999002
-  CodeMissingLanguage  = 999999001
+  RuntimeKeyPrefix   = "sys."
+  CodeMissingMessage  = 999999002
+  CodeMissingLanguage = 999999001
 )
 ```
 
@@ -188,33 +199,35 @@ If none found, response uses `CodeMissingLanguage` and `MessageCatalogNotFound`.
 
 ## 9. Template Engine
 
-Supported tokens:
+Supported tokens (all **named**):
 
-- Positional: `{{0}}`, `{{1}}`, ...
-- Plural: `{{plural:i|singular|plural}}`
-- Number: `{{num:i}}`
-- Date: `{{date:i}}`
+- Simple: `{{name}}`
+- Plural: `{{plural:count|singular|plural}}`
+- Number: `{{num:amount}}`
+- Date: `{{date:when}}`
+
+Parameter names use `[a-zA-Z_][a-zA-Z0-9_.]*`. Pass values via `Params` (e.g. `msgcat.Params{"name": "juan", "count": 3}`).
 
 Processing order:
 1. plural
 2. number
 3. date
-4. simple positional
+4. simple
 
 ### Important limitation
 
 Plural branches are plain text. Do not nest other placeholders inside `plural` branches.
 
 Good:
-- `"You have {{0}} {{plural:0|item|items}}"`
+- `"You have {{count}} {{plural:count|item|items}}"`
 
 Avoid:
-- `"You have {{plural:0|1 item|{{0}} items}}"`
+- `"You have {{plural:count|1 item|{{count}} items}}"`
 
 ### Strict template behavior
 
-When `StrictTemplates=true` and parameter index is missing:
-- token is replaced with `<missing:n>`
+When `StrictTemplates=true` and a parameter is missing:
+- token is replaced with `<missing:paramName>`
 - observer/stats receives a template issue event
 
 When strict mode is off:
@@ -223,11 +236,11 @@ When strict mode is off:
 
 ## 10. Number/Date Localization
 
-`{{num:i}}`:
+`{{num:name}}` (e.g. `{{num:amount}}`):
 - default style: `12,345.5`
 - for base languages `es`, `pt`, `fr`, `de`, `it`: `12.345,5`
 
-`{{date:i}}`:
+`{{date:name}}` (e.g. `{{date:when}}`):
 - default: `MM/DD/YYYY`
 - for base languages `es`, `pt`, `fr`, `de`, `it`: `DD/MM/YYYY`
 
@@ -248,8 +261,8 @@ Accepted date params:
 ### Runtime loading
 
 `LoadMessages(lang, messages)`:
-- only accepts codes in `[9000, 9999]`
-- rejects duplicate code per language
+- each `RawMessage` must have `Key` with prefix `sys.` (e.g. `sys.alert`)
+- rejects duplicate key per language
 - stores messages in runtime set so they survive YAML reload
 
 ### Reload
@@ -283,8 +296,8 @@ Race tests pass with `go test -race ./...`.
 `SnapshotStats` returns cumulative counters since catalog creation:
 - `LanguageFallbacks`: keyed as `"requested->resolved"`
 - `MissingLanguages`: keyed by requested language
-- `MissingMessages`: keyed as `"lang:code"`
-- `TemplateIssues`: keyed as `"lang:code:issue"`
+- `MissingMessages`: keyed as `"lang:msgKey"`
+- `TemplateIssues`: keyed as `"lang:msgKey:issue"`
 - `DroppedEvents`: internal drop counters (for example observer queue overflow)
 - `LastReloadAt`: timestamp set using `Config.NowFn`
 
@@ -331,7 +344,8 @@ func main() {
   }
 
   ctx := context.WithValue(context.Background(), "language", "es-MX")
-  msg := catalog.GetMessageWithCtx(ctx, 2, 3, 12345.5, time.Now())
+  params := msgcat.Params{"count": 3, "amount": 12345.5, "when": time.Now()}
+  msg := catalog.GetMessageWithCtx(ctx, "items.count", params)
   fmt.Println(msg.ShortText)
   fmt.Println(msg.LongText)
 
@@ -345,7 +359,7 @@ func main() {
 ## 17. Compatibility and Caveats
 
 - Context key compatibility supports both typed key and plain string key.
-- Missing code uses language default message and `CodeMissingMessage`.
+- Missing message key uses language default message and `CodeMissingMessage`.
 - Missing language uses `MessageCatalogNotFound` and `CodeMissingLanguage`.
 - `NowFn` exists for future deterministic time-driven extensions; date formatting currently uses params directly.
 

@@ -18,7 +18,7 @@ func makeBenchCatalog(b *testing.B) msgcat.MessageCatalog {
 	}
 	b.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 
-	en := []byte("group: 0\ndefault:\n  short: Unexpected error\n  long: Unexpected message code [{{0}}]\nset:\n  1:\n    short: Hello {{0}}\n    long: Number {{num:1}} at {{date:2}}\n")
+	en := []byte("default:\n  short: Unexpected error\n  long: Unexpected message code [{{key}}]\nset:\n  greeting.hello:\n    short: Hello {{name}}\n    long: Number {{num:amount}} at {{date:when}}\n")
 	if err := os.WriteFile(filepath.Join(tmpDir, "en.yaml"), en, 0o600); err != nil {
 		b.Fatalf("failed to write fixture: %v", err)
 	}
@@ -36,18 +36,19 @@ type noopObserver struct{}
 
 func (noopObserver) OnLanguageFallback(requestedLang string, resolvedLang string) {}
 func (noopObserver) OnLanguageMissing(lang string)                                {}
-func (noopObserver) OnMessageMissing(lang string, msgCode int)                    {}
-func (noopObserver) OnTemplateIssue(lang string, msgCode int, issue string)       {}
+func (noopObserver) OnMessageMissing(lang string, msgKey string)                  {}
+func (noopObserver) OnTemplateIssue(lang string, msgKey string, issue string)   {}
 
 func BenchmarkGetMessageWithCtx(b *testing.B) {
 	catalog := makeBenchCatalog(b)
 	ctx := context.WithValue(context.Background(), "language", "en")
 	date := time.Date(2026, time.January, 5, 12, 0, 0, 0, time.UTC)
+	params := msgcat.Params{"name": "world", "amount": 12345.67, "when": date}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = catalog.GetMessageWithCtx(ctx, 1, "world", 12345.67, date)
+		_ = catalog.GetMessageWithCtx(ctx, "greeting.hello", params)
 	}
 }
 
@@ -55,11 +56,12 @@ func BenchmarkGetErrorWithCtx(b *testing.B) {
 	catalog := makeBenchCatalog(b)
 	ctx := context.WithValue(context.Background(), "language", "en")
 	date := time.Date(2026, time.January, 5, 12, 0, 0, 0, time.UTC)
+	params := msgcat.Params{"name": "world", "amount": 12345.67, "when": date}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = catalog.GetErrorWithCtx(ctx, 1, "world", 12345.67, date)
+		_ = catalog.GetErrorWithCtx(ctx, "greeting.hello", params)
 	}
 }
 
@@ -69,7 +71,7 @@ func BenchmarkGetMessageWithCtxStrictOff(b *testing.B) {
 		b.Fatalf("failed to create temp dir: %v", err)
 	}
 	b.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-	en := []byte("group: 0\ndefault:\n  short: Unexpected error\n  long: Unexpected message code [{{0}}]\nset:\n  1:\n    short: Hello {{0}}\n    long: Number {{num:1}} at {{date:2}}\n")
+	en := []byte("default:\n  short: Unexpected error\n  long: Unexpected message code [{{key}}]\nset:\n  greeting.hello:\n    short: Hello {{name}}\n    long: Number {{num:amount}} at {{date:when}}\n")
 	if err := os.WriteFile(filepath.Join(tmpDir, "en.yaml"), en, 0o600); err != nil {
 		b.Fatalf("failed to write fixture: %v", err)
 	}
@@ -81,10 +83,11 @@ func BenchmarkGetMessageWithCtxStrictOff(b *testing.B) {
 
 	ctx := context.WithValue(context.Background(), "language", "en")
 	date := time.Date(2026, time.January, 5, 12, 0, 0, 0, time.UTC)
+	params := msgcat.Params{"name": "world", "amount": 12345.67, "when": date}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = catalog.GetMessageWithCtx(ctx, 1, "world", 12345.67, date)
+		_ = catalog.GetMessageWithCtx(ctx, "greeting.hello", params)
 	}
 }
 
@@ -94,7 +97,7 @@ func BenchmarkGetMessageWithCtxStrictOn(b *testing.B) {
 		b.Fatalf("failed to create temp dir: %v", err)
 	}
 	b.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-	en := []byte("group: 0\ndefault:\n  short: Unexpected error\n  long: Unexpected message code [{{0}}]\nset:\n  1:\n    short: Hello {{0}}\n    long: Number {{num:1}} at {{date:2}}\n")
+	en := []byte("default:\n  short: Unexpected error\n  long: Unexpected message code [{{key}}]\nset:\n  greeting.hello:\n    short: Hello {{name}}\n    long: Number {{num:amount}} at {{date:when}}\n")
 	if err := os.WriteFile(filepath.Join(tmpDir, "en.yaml"), en, 0o600); err != nil {
 		b.Fatalf("failed to write fixture: %v", err)
 	}
@@ -106,10 +109,11 @@ func BenchmarkGetMessageWithCtxStrictOn(b *testing.B) {
 
 	ctx := context.WithValue(context.Background(), "language", "en")
 	date := time.Date(2026, time.January, 5, 12, 0, 0, 0, time.UTC)
+	params := msgcat.Params{"name": "world", "amount": 12345.67, "when": date}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = catalog.GetMessageWithCtx(ctx, 1, "world", 12345.67, date)
+		_ = catalog.GetMessageWithCtx(ctx, "greeting.hello", params)
 	}
 }
 
@@ -119,7 +123,7 @@ func BenchmarkGetMessageWithCtxFallbackChain(b *testing.B) {
 		b.Fatalf("failed to create temp dir: %v", err)
 	}
 	b.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-	es := []byte("group: 0\ndefault:\n  short: Error inesperado\n  long: Error {{0}}\nset:\n  1:\n    short: Hola {{0}}\n")
+	es := []byte("default:\n  short: Error inesperado\n  long: Error {{key}}\nset:\n  greeting.hello:\n    short: Hola {{name}}\n")
 	if err := os.WriteFile(filepath.Join(tmpDir, "es.yaml"), es, 0o600); err != nil {
 		b.Fatalf("failed to write fixture: %v", err)
 	}
@@ -134,10 +138,11 @@ func BenchmarkGetMessageWithCtxFallbackChain(b *testing.B) {
 	b.Cleanup(func() { _ = msgcat.Close(catalog) })
 
 	ctx := context.WithValue(context.Background(), "language", "es-MX")
+	params := msgcat.Params{"name": "world"}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = catalog.GetMessageWithCtx(ctx, 1, "world")
+		_ = catalog.GetMessageWithCtx(ctx, "greeting.hello", params)
 	}
 }
 
@@ -147,7 +152,7 @@ func BenchmarkGetMessageWithCtxObserverEnabled(b *testing.B) {
 		b.Fatalf("failed to create temp dir: %v", err)
 	}
 	b.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-	en := []byte("group: 0\ndefault:\n  short: Unexpected error\n  long: Unexpected message code [{{0}}]\nset:\n  1:\n    short: Hello {{0}}\n")
+	en := []byte("default:\n  short: Unexpected error\n  long: Unexpected message code [{{key}}]\nset:\n  greeting.hello:\n    short: Hello {{name}}\n")
 	if err := os.WriteFile(filepath.Join(tmpDir, "en.yaml"), en, 0o600); err != nil {
 		b.Fatalf("failed to write fixture: %v", err)
 	}
@@ -165,6 +170,6 @@ func BenchmarkGetMessageWithCtxObserverEnabled(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = catalog.GetMessageWithCtx(ctx, 404)
+		_ = catalog.GetMessageWithCtx(ctx, "missing.key", nil)
 	}
 }

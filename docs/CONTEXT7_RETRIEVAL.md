@@ -11,9 +11,9 @@ Purpose: compact, chunk-friendly reference for LLM retrieval/indexing.
 - Load localized messages from YAML by language.
 - Resolve language from `context.Context`.
 - Fallback chain for missing regional/language variants.
-- Render templates with positional/plural/number/date tokens.
+- Render templates with named parameters (plural/number/date tokens).
 - Wrap errors with localized short/long text and code.
-- Runtime reload + runtime-loaded system messages.
+- Runtime reload + runtime-loaded messages (key prefix `sys.`).
 - Observability hooks + in-memory counters.
 - Concurrency-safe operations.
 
@@ -45,20 +45,20 @@ Defaults:
 
 ## C04_YAML_SCHEMA
 ```yaml
-group: 0
 default:
   short: string
   long: string
 set:
-  <code>:
+  <key>:   # e.g. greeting.hello, error.not_found
+    code: int    # optional
     short: string
     long: string
 ```
+Keys: `[a-zA-Z0-9_.-]+`. Templates use named params: `{{name}}`, `{{plural:count|a|b}}`, `{{num:amount}}`, `{{date:when}}`.
 Validation:
-- `group >= 0`
 - default short/long: at least one non-empty
 - `set` omitted => initialized empty
-- each code in `set` must be `> 0`
+- each key non-empty and valid format
 
 ## C05_LANGUAGE_RESOLUTION
 Input language normalization:
@@ -77,31 +77,27 @@ If no language found:
 - text: `MessageCatalogNotFound`
 
 ## C06_TEMPLATE_TOKENS
-Supported:
-- `{{0}}`, `{{1}}`, ... positional
-- `{{plural:i|singular|plural}}`
-- `{{num:i}}`
-- `{{date:i}}`
+Supported (named):
+- `{{name}}`
+- `{{plural:count|singular|plural}}`
+- `{{num:amount}}`
+- `{{date:when}}`
 
-Processing order:
-1. plural
-2. number
-3. date
-4. positional
+Pass via `msgcat.Params{"name": value, ...}`. Processing order: plural, number, date, simple.
 
 Limitation:
 - plural branches are plain text (do not nest placeholders inside branches).
 
 Strict mode (`StrictTemplates=true`):
-- missing param index => `<missing:n>`
+- missing param => `<missing:paramName>`
 - template issue recorded in stats/observer.
 
 ## C07_LOCALIZATION_RULES
-`{{num:i}}`:
+`{{num:name}}`:
 - default: `12,345.5`
 - for base lang in `{es, pt, fr, de, it}`: `12.345,5`
 
-`{{date:i}}`:
+`{{date:name}}`:
 - default: `MM/DD/YYYY`
 - for base lang in `{es, pt, fr, de, it}`: `DD/MM/YYYY`
 
@@ -111,13 +107,19 @@ Accepted date types:
 
 ## C08_PUBLIC_API
 ```go
+type Params map[string]interface{}
+
 type MessageCatalog interface {
   LoadMessages(lang string, messages []RawMessage) error
-  GetMessageWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) *Message
-  WrapErrorWithCtx(ctx context.Context, err error, msgCode int, msgParams ...interface{}) error
-  GetErrorWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) error
+  GetMessageWithCtx(ctx context.Context, msgKey string, params Params) *Message
+  WrapErrorWithCtx(ctx context.Context, err error, msgKey string, params Params) error
+  GetErrorWithCtx(ctx context.Context, msgKey string, params Params) error
 }
+```
 
+LoadMessages: each RawMessage must have Key with prefix `sys.`.
+
+```go
 func NewMessageCatalog(cfg Config) (MessageCatalog, error)
 func Reload(catalog MessageCatalog) error
 func SnapshotStats(catalog MessageCatalog) (MessageCatalogStats, error)
@@ -128,10 +130,9 @@ func Close(catalog MessageCatalog) error
 ## C09_CODES_AND_CONSTANTS
 ```go
 const (
-  SystemMessageMinCode = 9000
-  SystemMessageMaxCode = 9999
-  CodeMissingMessage   = 999999002
-  CodeMissingLanguage  = 999999001
+  RuntimeKeyPrefix   = "sys."
+  CodeMissingMessage  = 999999002
+  CodeMissingLanguage = 999999001
 )
 ```
 
@@ -141,7 +142,7 @@ Semantics:
 
 ## C10_RUNTIME_LOADING
 `LoadMessages(lang, messages)`:
-- only allows codes in `[9000, 9999]`
+- each RawMessage.Key must have prefix `sys.`
 - rejects duplicates per language
 - messages persist across `Reload`
 
@@ -158,8 +159,8 @@ Observer hooks:
 type Observer interface {
   OnLanguageFallback(requestedLang, resolvedLang string)
   OnLanguageMissing(lang string)
-  OnMessageMissing(lang string, msgCode int)
-  OnTemplateIssue(lang string, msgCode int, issue string)
+  OnMessageMissing(lang string, msgKey string)
+  OnTemplateIssue(lang string, msgKey string, issue string)
 }
 ```
 
@@ -168,8 +169,8 @@ Snapshot counters:
 type MessageCatalogStats struct {
   LanguageFallbacks map[string]int // "requested->resolved"
   MissingLanguages  map[string]int // "lang"
-  MissingMessages   map[string]int // "lang:code"
-  TemplateIssues    map[string]int // "lang:code:issue"
+  MissingMessages   map[string]int // "lang:msgKey"
+  TemplateIssues    map[string]int // "lang:msgKey:issue"
   DroppedEvents     map[string]int // internal drop counters
   LastReloadAt      time.Time
 }
@@ -204,7 +205,8 @@ catalog, _ := msgcat.NewMessageCatalog(msgcat.Config{
 })
 
 ctx := context.WithValue(context.Background(), "language", "es-MX")
-msg := catalog.GetMessageWithCtx(ctx, 2, 3, 12345.5, time.Now())
+params := msgcat.Params{"count": 3, "amount": 12345.5, "when": time.Now()}
+msg := catalog.GetMessageWithCtx(ctx, "items.count", params)
 _ = msg.ShortText
 _ = msg.LongText
 
