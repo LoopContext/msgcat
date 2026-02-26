@@ -100,6 +100,17 @@ var _ = Describe("Message Catalog", func() {
 		Expect(missingMsg.Key).To(Equal("missing.key"))
 	})
 
+	It("allows duplicate codes: two messages with same Code resolve by key", func() {
+		msgA := messageCatalog.GetMessageWithCtx(ctx.Ctx, "dup.a", nil)
+		msgB := messageCatalog.GetMessageWithCtx(ctx.Ctx, "dup.b", nil)
+		Expect(msgA.Code).To(Equal("SHARED"))
+		Expect(msgB.Code).To(Equal("SHARED"))
+		Expect(msgA.Key).To(Equal("dup.a"))
+		Expect(msgB.Key).To(Equal("dup.b"))
+		Expect(msgA.ShortText).To(Equal("First message with shared code"))
+		Expect(msgB.ShortText).To(Equal("Second message with shared code"))
+	})
+
 	It("should return short message", func() {
 		message := messageCatalog.GetMessageWithCtx(ctx.Ctx, "greeting.hello", nil)
 		Expect(message.ShortText).To(Equal("Hello short description"))

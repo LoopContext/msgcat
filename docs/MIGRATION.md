@@ -69,12 +69,24 @@ Action:
 
 If you configured an observer, call `msgcat.Close(catalog)` on shutdown to flush/stop worker goroutine cleanly.
 
-## 7) Backward compatibility notes
+## 7) Backward compatibility notes (v1.x pre–string-keys)
 
 - Context key lookup remains compatible with both typed key and plain string key.
-- Existing template syntax remains valid.
-- `LoadMessages` system-code constraint (`9000-9999`) is unchanged.
+- (If you are on a release with **string message keys and named parameters**, see section 9 below.)
 
 ## 8) Go version (v1.0.8+)
 
 Module requires **Go 1.26** or later. If you are on an older toolchain, upgrade before updating to msgcat v1.0.8.
+
+---
+
+## 9) Migration to string keys and named parameters (breaking)
+
+If you are moving from numeric message codes and positional template parameters to the new API:
+
+- **Message keys** — Use string keys everywhere (e.g. `"greeting.hello"`, `"error.not_found"`). Replace `GetMessageWithCtx(ctx, 1, a, b)` with `GetMessageWithCtx(ctx, "greeting.hello", msgcat.Params{"name": a, "detail": b})`.
+- **Templates** — Replace `{{0}}`, `{{1}}` with named placeholders: `{{name}}`, `{{plural:count|item|items}}`, `{{num:amount}}`, `{{date:when}}`. Pass a single `msgcat.Params` map.
+- **Code field** — Code is now optional and string. In YAML use `code: 404` or `code: "ERR_NOT_FOUND"`. In Go use `msgcat.CodeInt(503)` or `msgcat.CodeString("ERR_MAINT")`. Codes are not required to be unique. When code is empty, use `Message.Key` or `ErrorKey()` as the API identifier.
+- **LoadMessages** — Each message must have `Key` with prefix `sys.` (e.g. `sys.alert`). No numeric code range; use `Code: msgcat.CodeInt(9001)` or `Code: msgcat.CodeString("SYS_LOADED")` if you need a code.
+- **Observer** — `OnMessageMissing(lang, msgKey string)` and `OnTemplateIssue(lang, msgKey string, issue string)` now take string `msgKey` instead of `msgCode int`.
+- **YAML** — Remove `group`. Use string keys under `set:` and optional `code` per entry. See README and `docs/CONVERSION_PLAN.md`.

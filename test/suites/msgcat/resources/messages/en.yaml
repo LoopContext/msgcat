@@ -16,3 +16,11 @@ set:
   items.count:
     short: "You have {{count}} {{plural:count|item|items}}"
     long: "Total: {{num:amount}} generated at {{date:generatedAt}}"
+  dup.a:
+    code: "SHARED"
+    short: First message with shared code
+    long: First long
+  dup.b:
+    code: "SHARED"
+    short: Second message with shared code
+    long: Second long

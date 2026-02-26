@@ -52,7 +52,7 @@ default:
   long: string
 set:
   <key>:   # e.g. greeting.hello, error.not_found
-    code: int    # optional
+    code: int | string   # optional (YAML accepts either)
     short: string
     long: string
 ```

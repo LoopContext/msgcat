@@ -39,7 +39,7 @@ default:
   long: string
 set:
   <key>:   # string key, e.g. greeting.hello, error.not_found
-    code: int    # optional, for API/HTTP response
+    code: int | string   # optional (YAML accepts either; stored as string)
     short: string
     long: string
 ```

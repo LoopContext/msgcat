@@ -9,3 +9,11 @@ set:
   items.count:
     short: "Tienes {{count}} {{plural:count|elemento|elementos}}"
     long: "Total: {{num:amount}} generado el {{date:generatedAt}}"
+  dup.a:
+    code: "SHARED"
+    short: Primera con código compartido
+    long: Primera larga
+  dup.b:
+    code: "SHARED"
+    short: Segunda con código compartido
+    long: Segunda larga

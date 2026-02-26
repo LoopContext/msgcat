@@ -2,6 +2,8 @@
 
 Plan for converting msgcat from **numeric message codes** and **positional template parameters** to **string message keys** and **named parameters**. No backward compatibility required.
 
+**Note:** Sections 1–11 describe the planned design. **Section 12** documents the final implementation (optional string code, Key/ErrorKey, non-unique codes).
+
 ---
 
 ## 1. Summary of changes
@@ -12,7 +14,7 @@ Plan for converting msgcat from **numeric message codes** and **positional templ
 | YAML `set` keys | Numeric: `1:`, `2:` | String: `"greeting.hello":`, `"error.template":` |
 | Template params | Positional: `{{0}}`, `{{1}}`, `{{plural:0\|...}}` | Named: `{{name}}`, `{{plural:count\|...}}` |
 | API params | `msgParams ...interface{}` (ordered) | `params Params` (`map[string]interface{}`) |
-| Returned `Message.Code` | `msgCode + Group` | Per-entry `RawMessage.Code` (optional; 0 if unset) |
+| Returned `Message.Code` | `msgCode + Group` | Per-entry `RawMessage.Code` (optional **string**; empty if unset — see §12) |
 | `Messages.Group` | Used to compute display code | **Removed** (no longer needed) |
 | Observer / stats | `msgCode int` | `msgKey string` |
 
@@ -28,11 +30,11 @@ Plan for converting msgcat from **numeric message codes** and **positional templ
 
 - **RawMessage**
   - Keep: `LongTpl`, `ShortTpl` (YAML: `long`, `short`).
-  - **Code**: keep `int`; meaning is “numeric code for API/HTTP response”. In YAML and `LoadMessages`, set per entry; if 0, returned `Message.Code` can be 0 when message is found, or use a sentinel when missing.
-  - No `Key` field: the map key is the message key.
+  - **Code**: optional; meaning is "code for API/HTTP response". In YAML and `LoadMessages`, set per entry. Implemented as **optional string** (OptionalCode in YAML accepts int or string); see §12.
+  - No `Key` field in YAML: the map key is the message key. For LoadMessages, `RawMessage.Key` is required (e.g. `sys.xxx`).
 
 - **Message** (return type)
-  - Unchanged: `LongText`, `ShortText`, `Code int` (still the value to expose to API clients).
+  - Unchanged: `LongText`, `ShortText`. **Code** is **string** (empty when not set); add **Key** (message key). See §12.
 
 - **Observer**
   - `OnMessageMissing(lang string, msgCode int)` → `OnMessageMissing(lang string, msgKey string)`
@@ -198,9 +200,9 @@ type MessageCatalog interface {
 
 ## 7. Constants and errors
 
-- **CodeMissingMessage**, **CodeMissingLanguage**: keep as int; still used as `Message.Code` when message or language is missing.
-- **SystemMessageMinCode / MaxCode**: no longer used for LoadMessages; replace with “key must have prefix `sys.`” (or keep constant for doc purposes and use for nothing).
-- **newCatalogError(code, ...)**: unchanged; still takes int code (from Message.Code).
+- **CodeMissingMessage**, **CodeMissingLanguage**: implemented as **string** constants (e.g. `"msgcat.missing_message"`); see §12.
+- **SystemMessageMinCode / MaxCode**: no longer used; LoadMessages requires key prefix `sys.` only.
+- **newCatalogError(code, ...)**: takes **string** code; **ErrorCode()** and **ErrorKey()** on error type; see §12.
 
 ---
 
@@ -210,7 +212,7 @@ type MessageCatalog interface {
 |------|--------|
 | **structs.go** | Messages.Set → map[string]RawMessage; remove Group; RawMessage add Key (optional in YAML); Observer signatures; add Params type. |
 | **msgcat.go** | Regexes for named placeholders; observerEvent.msgKey; catalogStats keys by msgKey; runtimeMessages map[string]map[string]RawMessage; normalizeAndValidateMessages (string keys, optional code); loadFromYaml merge by string key; renderTemplate(lang, msgKey, template, params map[string]interface{}); GetMessageWithCtx(ctx, msgKey string, params Params); WrapErrorWithCtx, GetErrorWithCtx; LoadMessages by RawMessage.Key with sys.* validation; remove MessageParams struct if replaced by Params. |
-| **error.go** | No change (still int code). |
+| **error.go** | ErrorCode() string, ErrorKey(); newCatalogError(code string, ...). |
 | **test/suites/msgcat/resources/messages/*.yaml** | String keys; named placeholders; remove group; optional code per entry. |
 | **test/suites/msgcat/msgcat_test.go** | All GetMessageWithCtx(..., code, a, b, c) → GetMessageWithCtx(..., "key", Params{...}); LoadMessages with RawMessage{Key: "sys.xxx", ...}; Observer expectations with msgKey string. |
 | **test/mock/msgcat.go** | Regenerate (or manually) interface with msgKey string, params Params. |
@@ -263,3 +265,15 @@ type MessageCatalog interface {
 - In GetMessageWithCtx / WrapErrorWithCtx / GetErrorWithCtx: if params is nil, pass empty map to renderTemplate so templates see no params (missing placeholders get missing-param behavior).
 
 This plan is the single source of truth for the total conversion to string keys and named parameters.
+
+---
+
+## 12. Final state (as implemented)
+
+Beyond the plan above, the following was implemented:
+
+- **Code is optional and string** — For projects that already have error/message codes (HTTP status, `"ERR_001"`, etc.), the catalog stores and returns that value. `RawMessage.Code` is type `OptionalCode` (YAML: `code: 404` or `code: "ERR_NOT_FOUND"`; in Go: `msgcat.CodeInt(503)` or `msgcat.CodeString("ERR_MAINT")`). `Message.Code` and `ErrorCode()` return `string`; empty when not set.
+- **Codes are not unique** — The same code value can appear on multiple messages; uniqueness is not enforced.
+- **Key / ErrorKey** — When code is empty, use `Message.Key` or `ErrorKey()` as the API identifier.
+- **Constants** — `CodeMissingMessage` and `CodeMissingLanguage` are strings (e.g. `"msgcat.missing_message"`).
+- **Helpers** — `msgcat.CodeInt(int)` and `msgcat.CodeString(string)` for building `RawMessage.Code` in code.
