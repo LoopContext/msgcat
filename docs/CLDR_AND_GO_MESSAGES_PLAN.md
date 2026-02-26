@@ -2,7 +2,7 @@
 
 Plan to add **CLDR-style plural forms** and **messages defined in Go with extract** to msgcat, closing the gap with go-i18n.
 
-**Implementation status:** Done. Library has `ShortForms`/`LongForms`/`PluralParam` on `RawMessage`, `internal/plural` for form selection, `MessageDef` type, CLI extract finds MessageDef literals and merges into YAML, merge copies plural fields. See README, examples/cldr_plural, examples/msgdef.
+**Implementation status:** Done. Library has `ShortForms`/`LongForms`/`PluralParam` on `RawMessage`, **inline multi-form plural syntax** `{{plural:count|one:...|other:...}}`, `internal/plural` for form selection, `MessageDef` type, CLI extract finds MessageDef literals and merges into YAML, merge copies plural fields. See README, examples/cldr_plural, examples/msgdef.
 
 ---
 
@@ -10,11 +10,12 @@ Plan to add **CLDR-style plural forms** and **messages defined in Go with extrac
 
 ### 1.1 Goal
 
-Support the full set of CLDR plural categories (**zero**, **one**, **two**, **few**, **many**, **other**) so that languages with more than two forms (e.g. Arabic, Russian, Welsh) can have correct pluralization. Current msgcat only has binary `{{plural:count|singular|plural}}`.
+Support the full set of CLDR plural categories (**zero**, **one**, **two**, **few**, **many**, **other**) so that languages with more than two forms (e.g. Arabic, Russian, Welsh) can have correct pluralization. Support both optional entry-level maps and **inline multi-form tokens**.
 
 ### 1.2 Backward compatibility
 
-- Keep existing **short** / **long** strings and **`{{plural:count|singular|plural}}`** unchanged. No breaking change.
+- Keep existing **short** / **long** strings and **`{{plural:count|singular|plural}}`** (binary) unchanged. No breaking change.
+- Add **inline multi-form support**: `{{plural:count|one:item|other:items}}` uses the language rule to pick a form.
 - Add **optional** plural form maps. When present, they are used instead of the binary plural token for that entry.
 
 ### 1.3 YAML format (optional plural forms)
@@ -162,7 +163,7 @@ type MessageDef struct {
 
 ## 4. Out of scope (for this plan)
 
-- **Changing existing binary plural token:** `{{plural:count|singular|plural}}` stays as-is when CLDR forms are not used.
+- **Changing existing binary plural token:** `{{plural:count|singular|plural}}` stays as-is (backward compatible). Added **multi-form plural token** `{{plural:count|one:singular|other:plural|few:...}}` for inline CLDR rules.
 - **Runtime default message from Go:** Passing a MessageDef into GetMessageWithCtx as fallback when key is missing is a possible later extension.
 - **Hash/change detection** for merged translations (like goi18n) remains out of scope.
 

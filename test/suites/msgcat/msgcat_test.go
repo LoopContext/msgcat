@@ -260,6 +260,53 @@ var _ = Describe("Message Catalog", func() {
 		Expect(msgES.LongText).To(Equal("Total: 12.345,5 generado el 03/01/2026"))
 	})
 
+	It("should support multi-form plurals and advanced language rules", func() {
+		// Test English: 1 -> one, 2 -> other
+		err := messageCatalog.LoadMessages("en", []msgcat.RawMessage{{
+			Key:      "sys.multi",
+			ShortTpl: "{{plural:count|one:one item|other:{{count}} items}}",
+		}})
+		Expect(err).NotTo(HaveOccurred())
+
+		msgEN1 := messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 1})
+		Expect(msgEN1.ShortText).To(Equal("one item"))
+
+		msgEN2 := messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 2})
+		Expect(msgEN2.ShortText).To(Equal("2 items"))
+
+		// Test French: 0 -> one, 1 -> one, 2 -> other
+		err = messageCatalog.LoadMessages("fr", []msgcat.RawMessage{{
+			Key:      "sys.multi",
+			ShortTpl: "{{plural:count|one:un item|other:{{count}} items}}",
+		}})
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx.SetValue("language", "fr")
+		msgFR0 := messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 0})
+		Expect(msgFR0.ShortText).To(Equal("un item"))
+
+		msgFR1 := messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 1})
+		Expect(msgFR1.ShortText).To(Equal("un item"))
+
+		msgFR2 := messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 2})
+		Expect(msgFR2.ShortText).To(Equal("2 items"))
+
+		// Test Arabic: 0 -> zero, 1 -> one, 2 -> two, 3 -> few, 11 -> many, 100 -> other
+		err = messageCatalog.LoadMessages("ar", []msgcat.RawMessage{{
+			Key:      "sys.multi",
+			ShortTpl: "{{plural:count|zero:zero|one:one|two:two|few:few|many:many|other:other}}",
+		}})
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx.SetValue("language", "ar")
+		Expect(messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 0}).ShortText).To(Equal("zero"))
+		Expect(messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 1}).ShortText).To(Equal("one"))
+		Expect(messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 2}).ShortText).To(Equal("two"))
+		Expect(messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 5}).ShortText).To(Equal("few"))
+		Expect(messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 11}).ShortText).To(Equal("many"))
+		Expect(messageCatalog.GetMessageWithCtx(ctx.Ctx, "sys.multi", msgcat.Params{"count": 100}).ShortText).To(Equal("other"))
+	})
+
 	It("should support strict template checks and report template issues", func() {
 		observer := &mockObserver{}
 		strictCatalog, err := msgcat.NewMessageCatalog(msgcat.Config{

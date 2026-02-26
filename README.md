@@ -52,6 +52,8 @@ set:
   items.count:
     short: You have {{count}} {{plural:count|item|items}}
     long: Total: {{num:amount}} generated at {{date:when}}
+  person.cats:
+    short: "{{plural:count|zero:No cats|one:One cat|other:{{count}} cats}}"
 ```
 
 Example `es.yaml`:
@@ -146,6 +148,7 @@ All fields of `msgcat.Config`:
 - **Template tokens (named parameters)**
   - `{{name}}` — simple substitution.
   - `{{plural:count|singular|plural}}` — binary plural by named count parameter.
+  - `{{plural:count|one:item|few:items|many:items|other:items}}` — multi-form plural by named count parameter using CLDR rules (supports 0, 1, 2, few, many, other depending on language).
   - **CLDR plural forms** — optional `short_forms` / `long_forms` per entry (keys: `zero`, `one`, `two`, `few`, `many`, `other`) for full locale rules; see [CLDR and messages in Go](docs/CLDR_AND_GO_MESSAGES_PLAN.md).
   - `{{num:amount}}` — localized number for named parameter.
   - `{{date:when}}` — localized date for named parameter (`time.Time` or `*time.Time`).

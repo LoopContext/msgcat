@@ -31,6 +31,8 @@ set:
       one: "{{name}} has one cat."
       other: "{{name}} has {{count}} cats."
     plural_param: count
+  person.dogs:
+    short: "{{name}} has {{plural:count|zero:no dogs|one:one dog|other:{{count}} dogs}}"
 `)
 	if err := os.WriteFile(filepath.Join(dir, "en.yaml"), en, 0o600); err != nil {
 		panic(err)
@@ -45,6 +47,26 @@ set:
 
 	for _, count := range []int{0, 1, 2, 5} {
 		msg := catalog.GetMessageWithCtx(ctx, "person.cats", msgcat.Params{"name": "Nick", "count": count})
-		fmt.Printf("count=%d: %s\n", count, msg.ShortText)
+		fmt.Printf("cats count=%d: %s\n", count, msg.ShortText)
+		msgDog := catalog.GetMessageWithCtx(ctx, "person.dogs", msgcat.Params{"name": "Nick", "count": count})
+		fmt.Printf("dogs count=%d: %s\n", count, msgDog.ShortText)
+	}
+
+	ar := []byte(`default:
+  short: خطأ
+  long: خطأ
+set:
+  person.dogs:
+    short: "{{name}} لديه {{plural:count|zero:لا كلاب|one:كلب واحد|two:كلبان|few:{{count}} كلاب|many:{{count}} كلباً|other:{{count}} كلب}}"
+`)
+	if err := os.WriteFile(filepath.Join(dir, "ar.yaml"), ar, 0o600); err != nil {
+		panic(err)
+	}
+	msgcat.Reload(catalog)
+
+	ctxAR := context.WithValue(context.Background(), "language", "ar")
+	for _, count := range []int{0, 1, 2, 5, 11, 100} {
+		msgDog := catalog.GetMessageWithCtx(ctxAR, "person.dogs", msgcat.Params{"name": "Nick", "count": count})
+		fmt.Printf("AR dogs count=%d: %s\n", count, msgDog.ShortText)
 	}
 }

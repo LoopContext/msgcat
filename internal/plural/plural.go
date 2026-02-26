@@ -25,11 +25,13 @@ func Form(lang string, count int) string {
 		return formRussian(n)
 	case "pl":
 		return formPolish(n)
+	case "fr", "pt", "oc", "it":
+		return formFrench(n)
 	case "cy", "br", "ga", "gd", "gv", "kw", "mt", "sm", "ak":
 		return formWelsh(n)
 	case "he", "iw":
 		return formHebrew(n)
-	case "en", "es", "fr", "de", "it", "pt", "nl", "no", "sv", "da", "fi", "tr", "el", "ja", "ko", "zh", "th", "vi", "id", "hi":
+	case "en", "es", "de", "nl", "no", "sv", "da", "fi", "tr", "el", "ja", "ko", "zh", "th", "vi", "id", "hi":
 		return formOneOther(n)
 	default:
 		return "other"
@@ -38,6 +40,13 @@ func Form(lang string, count int) string {
 
 func formOneOther(n int) string {
 	if n == 1 {
+		return "one"
+	}
+	return "other"
+}
+
+func formFrench(n int) string {
+	if n == 0 || n == 1 {
 		return "one"
 	}
 	return "other"

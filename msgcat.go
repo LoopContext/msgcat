@@ -31,7 +31,7 @@ var messageKeyRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 
 var (
 	simplePlaceholderRegex = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_.]*)\}\}`)
-	pluralPlaceholderRegex = regexp.MustCompile(`\{\{plural:([a-zA-Z_][a-zA-Z0-9_.]*)\|([^|}]*)\|([^}]*)\}\}`)
+	pluralPlaceholderRegex = regexp.MustCompile(`\{\{plural:([a-zA-Z_][a-zA-Z0-9_.]*)\|((?:[^{}]|\{\{.*?\}\})*)\}\}`)
 	numberPlaceholderRegex = regexp.MustCompile(`\{\{num:([a-zA-Z_][a-zA-Z0-9_.]*)\}\}`)
 	datePlaceholderRegex   = regexp.MustCompile(`\{\{date:([a-zA-Z_][a-zA-Z0-9_.]*)\}\}`)
 )
@@ -388,13 +388,13 @@ func selectCLDRForm(forms map[string]string, lang string, count int, defaultTpl 
 	return defaultTpl
 }
 
-// parsePluralTokenNamed extracts param name, singular and plural from {{plural:name|singular|plural}}.
-func parsePluralTokenNamed(token string) (paramName string, singular string, plural string, ok bool) {
+// parsePluralToken extracts param name and content from {{plural:name|content}}.
+func parsePluralToken(token string) (paramName string, content string, ok bool) {
 	matches := pluralPlaceholderRegex.FindStringSubmatch(token)
-	if len(matches) != 4 {
-		return "", "", "", false
+	if len(matches) != 3 {
+		return "", "", false
 	}
-	return matches[1], matches[2], matches[3], true
+	return matches[1], matches[2], true
 }
 
 func toString(value interface{}) string {
@@ -722,7 +722,7 @@ func (dmc *DefaultMessageCatalog) renderTemplate(lang string, msgKey string, tem
 	}
 
 	rendered = pluralPlaceholderRegex.ReplaceAllStringFunc(rendered, func(token string) string {
-		paramName, singular, plural, ok := parsePluralTokenNamed(token)
+		paramName, content, ok := parsePluralToken(token)
 		if !ok {
 			return token
 		}
@@ -730,15 +730,45 @@ func (dmc *DefaultMessageCatalog) renderTemplate(lang string, msgKey string, tem
 		if !ok {
 			return replaceMissing("plural_missing_param_"+paramName, token, paramName)
 		}
-		isOne, ok := isPluralOne(val)
+		count, ok := pluralCountFromParam(val)
 		if !ok {
 			dmc.onTemplateIssue(lang, msgKey, "plural_invalid_param_"+paramName)
 			return token
 		}
-		if isOne {
-			return singular
+
+		parts := strings.Split(content, "|")
+		// Case 1: Legacy binary plural: {{plural:count|singular|plural}}
+		if len(parts) == 2 && !strings.Contains(parts[0], ":") {
+			isOne, _ := isPluralOne(val)
+			if isOne {
+				return parts[0]
+			}
+			return parts[1]
 		}
-		return plural
+
+		// Case 2: Multi-form plural: {{plural:count|one:singular|few:items|many:items|other:items}}
+		forms := make(map[string]string)
+		for _, part := range parts {
+			if idx := strings.Index(part, ":"); idx > 0 {
+				formName := strings.TrimSpace(part[:idx])
+				formValue := part[idx+1:]
+				forms[formName] = formValue
+			}
+		}
+
+		if len(forms) > 0 {
+			form := plural.Form(lang, count)
+			if tpl, ok := forms[form]; ok {
+				return tpl
+			}
+			if tpl, ok := forms["other"]; ok {
+				return tpl
+			}
+			// fallback to first form if no match
+			return parts[0]
+		}
+
+		return token
 	})
 
 	rendered = numberPlaceholderRegex.ReplaceAllStringFunc(rendered, func(token string) string {
