@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/loopcontext/msgcat/internal/plural"
 	"gopkg.in/yaml.v2"
 )
 
@@ -18,26 +19,29 @@ import (
 const MessageCatalogNotFound = "Unexpected error in message catalog, language [%s] not found. %s"
 
 const (
-	SystemMessageMinCode = 9000
-	SystemMessageMaxCode = 9999
-	CodeMissingMessage   = 999999002
-	CodeMissingLanguage  = 999999001
-	overflowStatKey      = "__overflow__"
+	// RuntimeKeyPrefix is required for message keys loaded via LoadMessages (e.g. "sys.").
+	RuntimeKeyPrefix     = "sys."
+	CodeMissingMessage  = "msgcat.missing_message"
+	CodeMissingLanguage = "msgcat.missing_language"
+	overflowStatKey     = "__overflow__"
 )
 
+// messageKeyRegex validates message keys: [a-zA-Z0-9_.-]+
+var messageKeyRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+
 var (
-	simplePlaceholderRegex = regexp.MustCompile(`\{\{(\d+)\}\}`)
-	pluralPlaceholderRegex = regexp.MustCompile(`\{\{plural:(\d+)\|([^|}]*)\|([^}]*)\}\}`)
-	numberPlaceholderRegex = regexp.MustCompile(`\{\{num:(\d+)\}\}`)
-	datePlaceholderRegex   = regexp.MustCompile(`\{\{date:(\d+)\}\}`)
+	simplePlaceholderRegex = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_.]*)\}\}`)
+	pluralPlaceholderRegex = regexp.MustCompile(`\{\{plural:([a-zA-Z_][a-zA-Z0-9_.]*)\|([^|}]*)\|([^}]*)\}\}`)
+	numberPlaceholderRegex = regexp.MustCompile(`\{\{num:([a-zA-Z_][a-zA-Z0-9_.]*)\}\}`)
+	datePlaceholderRegex   = regexp.MustCompile(`\{\{date:([a-zA-Z_][a-zA-Z0-9_.]*)\}\}`)
 )
 
 type MessageCatalog interface {
-	// Allows to load more messages (9000 - 9999 - reserved to system messages)
+	// LoadMessages adds or replaces messages for a language. Keys must have prefix RuntimeKeyPrefix (e.g. "sys.").
 	LoadMessages(lang string, messages []RawMessage) error
-	GetMessageWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) *Message
-	WrapErrorWithCtx(ctx context.Context, err error, msgCode int, msgParams ...interface{}) error
-	GetErrorWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) error
+	GetMessageWithCtx(ctx context.Context, msgKey string, params Params) *Message
+	WrapErrorWithCtx(ctx context.Context, err error, msgKey string, params Params) error
+	GetErrorWithCtx(ctx context.Context, msgKey string, params Params) error
 }
 
 type observerEventType int
@@ -54,7 +58,7 @@ type observerEvent struct {
 	requested     string
 	resolved      string
 	lang          string
-	msgCode       int
+	msgKey        string
 	templateIssue string
 }
 
@@ -109,12 +113,12 @@ func (s *catalogStats) incrementMissingLanguage(lang string) {
 	s.increment(s.missingLanguages, normalizeLangTag(lang))
 }
 
-func (s *catalogStats) incrementMissingMessage(lang string, msgCode int) {
-	s.increment(s.missingMessages, fmt.Sprintf("%s:%d", lang, msgCode))
+func (s *catalogStats) incrementMissingMessage(lang string, msgKey string) {
+	s.increment(s.missingMessages, fmt.Sprintf("%s:%s", lang, msgKey))
 }
 
-func (s *catalogStats) incrementTemplateIssue(lang string, msgCode int, issue string) {
-	s.increment(s.templateIssues, fmt.Sprintf("%s:%d:%s", lang, msgCode, issue))
+func (s *catalogStats) incrementTemplateIssue(lang string, msgKey string, issue string) {
+	s.increment(s.templateIssues, fmt.Sprintf("%s:%s:%s", lang, msgKey, issue))
 }
 
 func (s *catalogStats) incrementDroppedEvent(reason string) {
@@ -162,16 +166,12 @@ func (s *catalogStats) snapshot() MessageCatalogStats {
 
 type DefaultMessageCatalog struct {
 	mu              sync.RWMutex
-	messages        map[string]Messages // language with messages indexed by id
-	runtimeMessages map[string]map[int]RawMessage
+	messages        map[string]Messages // language -> messages (Set keyed by message key)
+	runtimeMessages map[string]map[string]RawMessage
 	cfg             Config
 	stats           catalogStats
 	observerCh      chan observerEvent
 	observerDone    chan struct{}
-}
-
-type MessageParams struct {
-	Params map[string]interface{}
 }
 
 func (dmc *DefaultMessageCatalog) readMessagesFromYaml() (map[string]Messages, error) {
@@ -248,13 +248,13 @@ func (dmc *DefaultMessageCatalog) loadFromYaml() error {
 		for lang, runtimeSet := range dmc.runtimeMessages {
 			msgSet, found := messageByLang[lang]
 			if !found {
-				msgSet = Messages{Set: map[int]RawMessage{}}
+				msgSet = Messages{Set: map[string]RawMessage{}}
 			}
 			if msgSet.Set == nil {
-				msgSet.Set = map[int]RawMessage{}
+				msgSet.Set = map[string]RawMessage{}
 			}
-			for code, msg := range runtimeSet {
-				msgSet.Set[code] = msg
+			for key, msg := range runtimeSet {
+				msgSet.Set[key] = msg
 			}
 			messageByLang[lang] = msgSet
 		}
@@ -266,21 +266,21 @@ func (dmc *DefaultMessageCatalog) loadFromYaml() error {
 }
 
 func normalizeAndValidateMessages(lang string, messages *Messages) error {
-	if messages.Group < 0 {
-		return fmt.Errorf("invalid message group for language %s: must be >= 0", lang)
-	}
 	if messages.Default.ShortTpl == "" && messages.Default.LongTpl == "" {
 		return fmt.Errorf("invalid default message for language %s: at least short or long text is required", lang)
 	}
 	if messages.Set == nil {
-		messages.Set = map[int]RawMessage{}
+		messages.Set = map[string]RawMessage{}
 	}
-	for code, raw := range messages.Set {
-		if code <= 0 {
-			return fmt.Errorf("invalid message code %d for language %s: must be > 0", code, lang)
+	for key, raw := range messages.Set {
+		if key == "" {
+			return fmt.Errorf("invalid message key for language %s: key must be non-empty", lang)
 		}
-		raw.Code = code
-		messages.Set[code] = raw
+		if !messageKeyRegex.MatchString(key) {
+			return fmt.Errorf("invalid message key %q for language %s: must match [a-zA-Z0-9_.-]+", key, lang)
+		}
+		// Code is optional; leave as-is from YAML
+		messages.Set[key] = raw
 	}
 
 	return nil
@@ -341,35 +341,60 @@ func isPluralOne(value interface{}) (bool, bool) {
 	}
 }
 
-func parseTokenIndex(token string, prefix string) (int, bool) {
-	if !strings.HasPrefix(token, prefix) || !strings.HasSuffix(token, "}}") {
+// pluralCountFromParam converts a param value to int for CLDR plural form selection.
+func pluralCountFromParam(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int8:
+		return int(typed), true
+	case int16:
+		return int(typed), true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case uint:
+		return int(typed), true
+	case uint8:
+		return int(typed), true
+	case uint16:
+		return int(typed), true
+	case uint32:
+		return int(typed), true
+	case uint64:
+		return int(typed), true
+	case float32:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	default:
 		return 0, false
 	}
-	raw := strings.TrimSuffix(strings.TrimPrefix(token, prefix), "}}")
-	if raw == "" {
-		return 0, false
-	}
-	idx, err := strconv.Atoi(raw)
-	if err != nil || idx < 0 {
-		return 0, false
-	}
-	return idx, true
 }
 
-func parsePluralToken(token string) (idx int, singular string, plural string, ok bool) {
-	if !strings.HasPrefix(token, "{{plural:") || !strings.HasSuffix(token, "}}") {
-		return 0, "", "", false
+// selectCLDRForm returns the template string from forms for the given lang and count, with fallback to other then defaultTpl.
+func selectCLDRForm(forms map[string]string, lang string, count int, defaultTpl string) string {
+	if len(forms) == 0 {
+		return defaultTpl
 	}
-	raw := strings.TrimSuffix(strings.TrimPrefix(token, "{{plural:"), "}}")
-	parts := strings.SplitN(raw, "|", 3)
-	if len(parts) != 3 {
-		return 0, "", "", false
+	form := plural.Form(lang, count)
+	if tpl, ok := forms[form]; ok && tpl != "" {
+		return tpl
 	}
-	parsedIdx, err := strconv.Atoi(parts[0])
-	if err != nil || parsedIdx < 0 {
-		return 0, "", "", false
+	if tpl, ok := forms["other"]; ok && tpl != "" {
+		return tpl
 	}
-	return parsedIdx, parts[1], parts[2], true
+	return defaultTpl
+}
+
+// parsePluralTokenNamed extracts param name, singular and plural from {{plural:name|singular|plural}}.
+func parsePluralTokenNamed(token string) (paramName string, singular string, plural string, ok bool) {
+	matches := pluralPlaceholderRegex.FindStringSubmatch(token)
+	if len(matches) != 4 {
+		return "", "", "", false
+	}
+	return matches[1], matches[2], matches[3], true
 }
 
 func toString(value interface{}) string {
@@ -556,11 +581,11 @@ func (dmc *DefaultMessageCatalog) startObserverWorker() {
 				})
 			case observerEventMessageMissing:
 				safeObserverCall(func() {
-					dmc.cfg.Observer.OnMessageMissing(evt.lang, evt.msgCode)
+					dmc.cfg.Observer.OnMessageMissing(evt.lang, evt.msgKey)
 				})
 			case observerEventTemplateIssue:
 				safeObserverCall(func() {
-					dmc.cfg.Observer.OnTemplateIssue(evt.lang, evt.msgCode, evt.templateIssue)
+					dmc.cfg.Observer.OnTemplateIssue(evt.lang, evt.msgKey, evt.templateIssue)
 				})
 			}
 		}
@@ -610,21 +635,21 @@ func (dmc *DefaultMessageCatalog) onLanguageMissing(lang string) {
 	})
 }
 
-func (dmc *DefaultMessageCatalog) onMessageMissing(lang string, msgCode int) {
-	dmc.stats.incrementMissingMessage(lang, msgCode)
+func (dmc *DefaultMessageCatalog) onMessageMissing(lang string, msgKey string) {
+	dmc.stats.incrementMissingMessage(lang, msgKey)
 	dmc.publishObserverEvent(observerEvent{
-		kind:    observerEventMessageMissing,
-		lang:    lang,
-		msgCode: msgCode,
+		kind:   observerEventMessageMissing,
+		lang:   lang,
+		msgKey: msgKey,
 	})
 }
 
-func (dmc *DefaultMessageCatalog) onTemplateIssue(lang string, msgCode int, issue string) {
-	dmc.stats.incrementTemplateIssue(lang, msgCode, issue)
+func (dmc *DefaultMessageCatalog) onTemplateIssue(lang string, msgKey string, issue string) {
+	dmc.stats.incrementTemplateIssue(lang, msgKey, issue)
 	dmc.publishObserverEvent(observerEvent{
 		kind:          observerEventTemplateIssue,
 		lang:          lang,
-		msgCode:       msgCode,
+		msgKey:        msgKey,
 		templateIssue: issue,
 	})
 }
@@ -676,30 +701,38 @@ func (dmc *DefaultMessageCatalog) resolveLanguage(requestedLang string) (string,
 	return normalizedRequested, false, false
 }
 
-func (dmc *DefaultMessageCatalog) renderTemplate(lang string, msgCode int, template string, params []interface{}) string {
+func (dmc *DefaultMessageCatalog) renderTemplate(lang string, msgKey string, template string, params map[string]interface{}) string {
 	if !strings.Contains(template, "{{") {
 		return template
 	}
+	if params == nil {
+		params = map[string]interface{}{}
+	}
 	rendered := template
-	replaceMissing := func(issue string, originalToken string, idx int) string {
-		dmc.onTemplateIssue(lang, msgCode, issue)
+	replaceMissing := func(issue string, originalToken string, paramName string) string {
+		dmc.onTemplateIssue(lang, msgKey, issue)
 		if dmc.cfg.StrictTemplates {
-			return "<missing:" + strconv.Itoa(idx) + ">"
+			return "<missing:" + paramName + ">"
 		}
 		return originalToken
 	}
+	getParam := func(name string) (interface{}, bool) {
+		v, ok := params[name]
+		return v, ok
+	}
 
 	rendered = pluralPlaceholderRegex.ReplaceAllStringFunc(rendered, func(token string) string {
-		idx, singular, plural, ok := parsePluralToken(token)
+		paramName, singular, plural, ok := parsePluralTokenNamed(token)
 		if !ok {
 			return token
 		}
-		if idx >= len(params) {
-			return replaceMissing("plural_missing_param_"+strconv.Itoa(idx), token, idx)
-		}
-		isOne, ok := isPluralOne(params[idx])
+		val, ok := getParam(paramName)
 		if !ok {
-			dmc.onTemplateIssue(lang, msgCode, "plural_invalid_param_"+strconv.Itoa(idx))
+			return replaceMissing("plural_missing_param_"+paramName, token, paramName)
+		}
+		isOne, ok := isPluralOne(val)
+		if !ok {
+			dmc.onTemplateIssue(lang, msgKey, "plural_invalid_param_"+paramName)
 			return token
 		}
 		if isOne {
@@ -709,46 +742,52 @@ func (dmc *DefaultMessageCatalog) renderTemplate(lang string, msgCode int, templ
 	})
 
 	rendered = numberPlaceholderRegex.ReplaceAllStringFunc(rendered, func(token string) string {
-		idx, ok := parseTokenIndex(token, "{{num:")
-		if !ok {
+		matches := numberPlaceholderRegex.FindStringSubmatch(token)
+		if len(matches) != 2 {
 			return token
 		}
-		if idx >= len(params) {
-			return replaceMissing("number_missing_param_"+strconv.Itoa(idx), token, idx)
-		}
-		formatted, ok := formatNumberByLang(lang, params[idx])
+		paramName := matches[1]
+		val, ok := getParam(paramName)
 		if !ok {
-			dmc.onTemplateIssue(lang, msgCode, "number_invalid_param_"+strconv.Itoa(idx))
+			return replaceMissing("number_missing_param_"+paramName, token, paramName)
+		}
+		formatted, ok := formatNumberByLang(lang, val)
+		if !ok {
+			dmc.onTemplateIssue(lang, msgKey, "number_invalid_param_"+paramName)
 			return token
 		}
 		return formatted
 	})
 
 	rendered = datePlaceholderRegex.ReplaceAllStringFunc(rendered, func(token string) string {
-		idx, ok := parseTokenIndex(token, "{{date:")
-		if !ok {
+		matches := datePlaceholderRegex.FindStringSubmatch(token)
+		if len(matches) != 2 {
 			return token
 		}
-		if idx >= len(params) {
-			return replaceMissing("date_missing_param_"+strconv.Itoa(idx), token, idx)
-		}
-		formatted, ok := formatDateByLang(lang, params[idx])
+		paramName := matches[1]
+		val, ok := getParam(paramName)
 		if !ok {
-			dmc.onTemplateIssue(lang, msgCode, "date_invalid_param_"+strconv.Itoa(idx))
+			return replaceMissing("date_missing_param_"+paramName, token, paramName)
+		}
+		formatted, ok := formatDateByLang(lang, val)
+		if !ok {
+			dmc.onTemplateIssue(lang, msgKey, "date_invalid_param_"+paramName)
 			return token
 		}
 		return formatted
 	})
 
 	rendered = simplePlaceholderRegex.ReplaceAllStringFunc(rendered, func(token string) string {
-		idx, ok := parseTokenIndex(token, "{{")
-		if !ok {
+		matches := simplePlaceholderRegex.FindStringSubmatch(token)
+		if len(matches) != 2 {
 			return token
 		}
-		if idx >= len(params) {
-			return replaceMissing("simple_missing_param_"+strconv.Itoa(idx), token, idx)
+		paramName := matches[1]
+		val, ok := getParam(paramName)
+		if !ok {
+			return replaceMissing("simple_missing_param_"+paramName, token, paramName)
 		}
-		return toString(params[idx])
+		return toString(val)
 	})
 
 	return rendered
@@ -767,43 +806,53 @@ func (dmc *DefaultMessageCatalog) LoadMessages(lang string, messages []RawMessag
 		dmc.messages = map[string]Messages{}
 	}
 	if dmc.runtimeMessages == nil {
-		dmc.runtimeMessages = map[string]map[int]RawMessage{}
+		dmc.runtimeMessages = map[string]map[string]RawMessage{}
 	}
 	if _, foundLangMsg := dmc.messages[normalizedLang]; !foundLangMsg {
 		dmc.messages[normalizedLang] = Messages{
-			Set: map[int]RawMessage{},
+			Set: map[string]RawMessage{},
 		}
 	}
 	if _, foundRuntimeLang := dmc.runtimeMessages[normalizedLang]; !foundRuntimeLang {
-		dmc.runtimeMessages[normalizedLang] = map[int]RawMessage{}
+		dmc.runtimeMessages[normalizedLang] = map[string]RawMessage{}
 	}
 
 	langMsgSet := dmc.messages[normalizedLang]
 	if langMsgSet.Set == nil {
-		langMsgSet.Set = map[int]RawMessage{}
+		langMsgSet.Set = map[string]RawMessage{}
 	}
 
 	for _, message := range messages {
-		if message.Code < SystemMessageMinCode || message.Code > SystemMessageMaxCode {
-			return fmt.Errorf("application messages should be loaded using YAML file, allowed range only between %d and %d", SystemMessageMinCode, SystemMessageMaxCode)
+		key := message.Key
+		if key == "" {
+			return fmt.Errorf("LoadMessages: message key is required")
 		}
-		if _, foundMsg := langMsgSet.Set[message.Code]; foundMsg {
-			return fmt.Errorf("message with %d already exists in message set for language %s", message.Code, normalizedLang)
+		if !strings.HasPrefix(key, RuntimeKeyPrefix) {
+			return fmt.Errorf("LoadMessages: key %q must have prefix %q", key, RuntimeKeyPrefix)
+		}
+		if !messageKeyRegex.MatchString(key) {
+			return fmt.Errorf("LoadMessages: invalid key %q", key)
+		}
+		if _, foundMsg := langMsgSet.Set[key]; foundMsg {
+			return fmt.Errorf("message with key %q already exists in message set for language %s", key, normalizedLang)
 		}
 		normalizedMessage := RawMessage{
-			LongTpl:  message.LongTpl,
-			ShortTpl: message.ShortTpl,
-			Code:     message.Code,
+			LongTpl:     message.LongTpl,
+			ShortTpl:    message.ShortTpl,
+			Code:        message.Code,
+			ShortForms:  message.ShortForms,
+			LongForms:   message.LongForms,
+			PluralParam: message.PluralParam,
 		}
-		langMsgSet.Set[message.Code] = normalizedMessage
-		dmc.runtimeMessages[normalizedLang][message.Code] = normalizedMessage
+		langMsgSet.Set[key] = normalizedMessage
+		dmc.runtimeMessages[normalizedLang][key] = normalizedMessage
 	}
 	dmc.messages[normalizedLang] = langMsgSet
 
 	return nil
 }
 
-func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) *Message {
+func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgKey string, params Params) *Message {
 	requestedLang := dmc.resolveRequestedLang(ctx)
 	resolvedLang, foundLangMsg, usedFallback := dmc.resolveLanguage(requestedLang)
 	if !foundLangMsg {
@@ -812,6 +861,7 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgCode
 			ShortText: fmt.Sprintf(MessageCatalogNotFound, requestedLang, ""),
 			LongText:  fmt.Sprintf(MessageCatalogNotFound, requestedLang, "Please, contact support."),
 			Code:      CodeMissingLanguage,
+			Key:       msgKey,
 		}
 	}
 	if usedFallback {
@@ -827,6 +877,7 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgCode
 			ShortText: fmt.Sprintf(MessageCatalogNotFound, requestedLang, ""),
 			LongText:  fmt.Sprintf(MessageCatalogNotFound, requestedLang, "Please, contact support."),
 			Code:      CodeMissingLanguage,
+			Key:       msgKey,
 		}
 	}
 
@@ -834,36 +885,54 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgCode
 	longMessage := langMsgSet.Default.LongTpl
 	code := CodeMissingMessage
 	missingMessage := false
-	if msg, foundMsg := langMsgSet.Set[msgCode]; foundMsg {
+	if msg, ok := langMsgSet.Set[msgKey]; ok {
 		shortMessage = msg.ShortTpl
 		longMessage = msg.LongTpl
-		code = msgCode + langMsgSet.Group
+		code = string(msg.Code)
+		// CLDR plural forms: when ShortForms/LongForms are set, select by plural param and language
+		if len(msg.ShortForms) > 0 || len(msg.LongForms) > 0 {
+			pluralParam := msg.PluralParam
+			if pluralParam == "" {
+				pluralParam = "count"
+			}
+			paramMap := map[string]interface{}(params)
+			if paramMap == nil {
+				paramMap = map[string]interface{}{}
+			}
+			if countVal, ok := pluralCountFromParam(paramMap[pluralParam]); ok {
+				shortMessage = selectCLDRForm(msg.ShortForms, resolvedLang, countVal, shortMessage)
+				longMessage = selectCLDRForm(msg.LongForms, resolvedLang, countVal, longMessage)
+			}
+		}
 	} else {
 		missingMessage = true
-		msgParams = []interface{}{msgCode}
 	}
 	dmc.mu.RUnlock()
 	if missingMessage {
-		dmc.onMessageMissing(resolvedLang, msgCode)
+		dmc.onMessageMissing(resolvedLang, msgKey)
 	}
 
-	shortMessage = dmc.renderTemplate(resolvedLang, msgCode, shortMessage, msgParams)
-	longMessage = dmc.renderTemplate(resolvedLang, msgCode, longMessage, msgParams)
+	paramMap := map[string]interface{}(params)
+	if paramMap == nil {
+		paramMap = map[string]interface{}{}
+	}
+	shortMessage = dmc.renderTemplate(resolvedLang, msgKey, shortMessage, paramMap)
+	longMessage = dmc.renderTemplate(resolvedLang, msgKey, longMessage, paramMap)
 	return &Message{
 		LongText:  longMessage,
 		ShortText: shortMessage,
 		Code:      code,
+		Key:       msgKey,
 	}
 }
 
-func (dmc *DefaultMessageCatalog) WrapErrorWithCtx(ctx context.Context, err error, msgCode int, msgParams ...interface{}) error {
-	message := dmc.GetMessageWithCtx(ctx, msgCode, msgParams...)
-
-	return newCatalogError(message.Code, message.ShortText, message.LongText, err)
+func (dmc *DefaultMessageCatalog) WrapErrorWithCtx(ctx context.Context, err error, msgKey string, params Params) error {
+	message := dmc.GetMessageWithCtx(ctx, msgKey, params)
+	return newCatalogError(message.Code, message.Key, message.ShortText, message.LongText, err)
 }
 
-func (dmc *DefaultMessageCatalog) GetErrorWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) error {
-	return dmc.WrapErrorWithCtx(ctx, nil, msgCode, msgParams...)
+func (dmc *DefaultMessageCatalog) GetErrorWithCtx(ctx context.Context, msgKey string, params Params) error {
+	return dmc.WrapErrorWithCtx(ctx, nil, msgKey, params)
 }
 
 func (dmc *DefaultMessageCatalog) Reload() error {

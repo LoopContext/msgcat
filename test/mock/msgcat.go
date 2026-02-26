@@ -49,58 +49,43 @@ func (mr *MockMessageCatalogMockRecorder) LoadMessages(lang, messages interface{
 }
 
 // GetMessageWithCtx mocks base method
-func (m *MockMessageCatalog) GetMessageWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) *msgcat.Message {
+func (m *MockMessageCatalog) GetMessageWithCtx(ctx context.Context, msgKey string, params msgcat.Params) *msgcat.Message {
 	m.ctrl.T.Helper()
-	varargs := []interface{}{ctx, msgCode}
-	for _, a := range msgParams {
-		varargs = append(varargs, a)
-	}
-	ret := m.ctrl.Call(m, "GetMessageWithCtx", varargs...)
+	ret := m.ctrl.Call(m, "GetMessageWithCtx", ctx, msgKey, params)
 	ret0, _ := ret[0].(*msgcat.Message)
 	return ret0
 }
 
 // GetMessageWithCtx indicates an expected call of GetMessageWithCtx
-func (mr *MockMessageCatalogMockRecorder) GetMessageWithCtx(ctx, msgCode interface{}, msgParams ...interface{}) *gomock.Call {
+func (mr *MockMessageCatalogMockRecorder) GetMessageWithCtx(ctx, msgKey, params interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]interface{}{ctx, msgCode}, msgParams...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMessageWithCtx", reflect.TypeOf((*MockMessageCatalog)(nil).GetMessageWithCtx), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMessageWithCtx", reflect.TypeOf((*MockMessageCatalog)(nil).GetMessageWithCtx), ctx, msgKey, params)
 }
 
 // WrapErrorWithCtx mocks base method
-func (m *MockMessageCatalog) WrapErrorWithCtx(ctx context.Context, err error, msgCode int, msgParams ...interface{}) error {
+func (m *MockMessageCatalog) WrapErrorWithCtx(ctx context.Context, err error, msgKey string, params msgcat.Params) error {
 	m.ctrl.T.Helper()
-	varargs := []interface{}{ctx, err, msgCode}
-	for _, a := range msgParams {
-		varargs = append(varargs, a)
-	}
-	ret := m.ctrl.Call(m, "WrapErrorWithCtx", varargs...)
+	ret := m.ctrl.Call(m, "WrapErrorWithCtx", ctx, err, msgKey, params)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // WrapErrorWithCtx indicates an expected call of WrapErrorWithCtx
-func (mr *MockMessageCatalogMockRecorder) WrapErrorWithCtx(ctx, err, msgCode interface{}, msgParams ...interface{}) *gomock.Call {
+func (mr *MockMessageCatalogMockRecorder) WrapErrorWithCtx(ctx, err, msgKey, params interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]interface{}{ctx, err, msgCode}, msgParams...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WrapErrorWithCtx", reflect.TypeOf((*MockMessageCatalog)(nil).WrapErrorWithCtx), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WrapErrorWithCtx", reflect.TypeOf((*MockMessageCatalog)(nil).WrapErrorWithCtx), ctx, err, msgKey, params)
 }
 
 // GetErrorWithCtx mocks base method
-func (m *MockMessageCatalog) GetErrorWithCtx(ctx context.Context, msgCode int, msgParams ...interface{}) error {
+func (m *MockMessageCatalog) GetErrorWithCtx(ctx context.Context, msgKey string, params msgcat.Params) error {
 	m.ctrl.T.Helper()
-	varargs := []interface{}{ctx, msgCode}
-	for _, a := range msgParams {
-		varargs = append(varargs, a)
-	}
-	ret := m.ctrl.Call(m, "GetErrorWithCtx", varargs...)
+	ret := m.ctrl.Call(m, "GetErrorWithCtx", ctx, msgKey, params)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // GetErrorWithCtx indicates an expected call of GetErrorWithCtx
-func (mr *MockMessageCatalogMockRecorder) GetErrorWithCtx(ctx, msgCode interface{}, msgParams ...interface{}) *gomock.Call {
+func (mr *MockMessageCatalogMockRecorder) GetErrorWithCtx(ctx, msgKey, params interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]interface{}{ctx, msgCode}, msgParams...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetErrorWithCtx", reflect.TypeOf((*MockMessageCatalog)(nil).GetErrorWithCtx), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetErrorWithCtx", reflect.TypeOf((*MockMessageCatalog)(nil).GetErrorWithCtx), ctx, msgKey, params)
 }

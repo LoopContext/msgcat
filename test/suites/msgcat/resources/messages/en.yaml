@@ -1,17 +1,26 @@
-group: 0
 default:
   short: Unexpected error
   long: Unexpected error was received and was not found in catalog
 set:
-  1:
+  greeting.hello:
+    code: 1
     short: Hello short description
     long: Hello veeery long description. You can only see me in details page.
-  2:
-    short: Hello template {{0}}, this is nice {{1}}
-    long: Hello veeery long {{0}} description. You can only see me in details {{1}} page.
-  3:
-    short: Invalid entry .p0}}
-    long: Invalid entry {{.p0, please fix using {{.p3}}
-  4:
-    short: "You have {{0}} {{plural:0|item|items}}"
-    long: "Total: {{num:1}} generated at {{date:2}}"
+  greeting.template:
+    code: 2
+    short: Hello template {{name}}, this is nice {{detail}}
+    long: Hello veeery long {{name}} description. You can only see me in details {{detail}} page.
+  error.invalid_entry:
+    short: Invalid entry {{name}}
+    long: Invalid entry {{name}}, please fix using {{detail}}
+  items.count:
+    short: "You have {{count}} {{plural:count|item|items}}"
+    long: "Total: {{num:amount}} generated at {{date:generatedAt}}"
+  dup.a:
+    code: "SHARED"
+    short: First message with shared code
+    long: First long
+  dup.b:
+    code: "SHARED"
+    short: Second message with shared code
+    long: Second long

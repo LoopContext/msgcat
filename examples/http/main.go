@@ -43,7 +43,7 @@ func main() {
 	defer func() { _ = msgcat.Close(catalog) }()
 
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		msg := catalog.GetMessageWithCtx(r.Context(), 1, "user")
+		msg := catalog.GetMessageWithCtx(r.Context(), "greeting.hello", msgcat.Params{"name": "user"})
 		_, _ = w.Write([]byte(msg.ShortText))
 	})
 
