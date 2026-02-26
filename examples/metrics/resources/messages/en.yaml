@@ -1,0 +1,7 @@
+default:
+  short: Unexpected error
+  long: Message not found in catalog
+set:
+  greeting.hello:
+    short: Hello
+    long: Hello, welcome.

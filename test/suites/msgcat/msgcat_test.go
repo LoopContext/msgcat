@@ -81,7 +81,23 @@ var _ = Describe("Message Catalog", func() {
 
 	It("should return message code", func() {
 		message := messageCatalog.GetMessageWithCtx(ctx.Ctx, "greeting.hello", nil)
-		Expect(message.Code).To(Equal(1))
+		Expect(message.Code).To(Equal("1"))
+	})
+
+	It("should set Message.Key and use Key when Code is empty for API identifier", func() {
+		message := messageCatalog.GetMessageWithCtx(ctx.Ctx, "greeting.hello", nil)
+		Expect(message.Key).To(Equal("greeting.hello"))
+		// error.invalid_entry has no code in YAML, so Code is empty; API can use Key
+		msgNoCode := messageCatalog.GetMessageWithCtx(ctx.Ctx, "error.invalid_entry", msgcat.Params{"name": "x", "detail": "y"})
+		Expect(msgNoCode.Code).To(Equal(""))
+		Expect(msgNoCode.Key).To(Equal("error.invalid_entry"))
+		err := messageCatalog.GetErrorWithCtx(ctx.Ctx, "error.invalid_entry", msgcat.Params{"name": "x", "detail": "y"})
+		casted := err.(msgcat.Error)
+		Expect(casted.ErrorCode()).To(Equal(""))
+		Expect(casted.ErrorKey()).To(Equal("error.invalid_entry"))
+		// Missing message: Key is still the requested key
+		missingMsg := messageCatalog.GetMessageWithCtx(ctx.Ctx, "missing.key", nil)
+		Expect(missingMsg.Key).To(Equal("missing.key"))
 	})
 
 	It("should return short message", func() {
@@ -96,7 +112,7 @@ var _ = Describe("Message Catalog", func() {
 
 	It("should return message code (with template)", func() {
 		message := messageCatalog.GetMessageWithCtx(ctx.Ctx, "greeting.template", msgcat.Params{"name": 1, "detail": "CODE"})
-		Expect(message.Code).To(Equal(2))
+		Expect(message.Code).To(Equal("2"))
 	})
 
 	It("should return short message (with template)", func() {
@@ -144,7 +160,7 @@ var _ = Describe("Message Catalog", func() {
 		castedError := err.(msgcat.Error)
 		Expect(castedError.GetShortMessage()).To(Equal("Hola, breve descripción"))
 		Expect(castedError.GetLongMessage()).To(Equal("Hola, descripción muy larga. Solo puedes verme en la página de detalles."))
-		Expect(castedError.ErrorCode()).To(Equal(1))
+		Expect(castedError.ErrorCode()).To(Equal("1"))
 	})
 
 	It("should be able to load messages from code", func() {
@@ -152,7 +168,7 @@ var _ = Describe("Message Catalog", func() {
 			Key:      "sys.9001",
 			LongTpl:  "Some long system message",
 			ShortTpl: "Some short system message",
-			Code:     9001,
+			Code:     msgcat.CodeInt(9001),
 		}})
 		Expect(err).NotTo(HaveOccurred())
 		err = messageCatalog.GetErrorWithCtx(ctx.Ctx, "sys.9001", nil)
@@ -164,7 +180,7 @@ var _ = Describe("Message Catalog", func() {
 			Key:      "sys.9001",
 			LongTpl:  "Mensagem longa de sistema",
 			ShortTpl: "Mensagem curta de sistema",
-			Code:     9001,
+			Code:     msgcat.CodeInt(9001),
 		}})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -191,7 +207,7 @@ var _ = Describe("Message Catalog", func() {
 			Key:      "sys.loaded",
 			LongTpl:  "Loaded from code",
 			ShortTpl: "Loaded from code short",
-			Code:     9001,
+			Code:     msgcat.CodeInt(9001),
 		}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(customCatalog.GetMessageWithCtx(ctx.Ctx, "sys.loaded", nil).ShortText).To(Equal("Loaded from code short"))
@@ -276,7 +292,7 @@ var _ = Describe("Message Catalog", func() {
 			Key:      "sys.runtime",
 			LongTpl:  "Runtime long",
 			ShortTpl: "Runtime short",
-			Code:     9001,
+			Code:     msgcat.CodeInt(9001),
 		}})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -454,7 +470,7 @@ var _ = Describe("Message Catalog", func() {
 					Key:      key,
 					LongTpl:  fmt.Sprintf("Long %s", key),
 					ShortTpl: fmt.Sprintf("Short %s", key),
-					Code:     9000 + i,
+					Code:     msgcat.CodeInt(9000 + i),
 				}})
 				if err != nil {
 					errCh <- err

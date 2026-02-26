@@ -1,0 +1,7 @@
+default:
+  short: Error inesperado
+  long: Mensaje no encontrado
+set:
+  greeting.hello:
+    short: Hola
+    long: Hola, bienvenido.

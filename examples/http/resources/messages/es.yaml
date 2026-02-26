@@ -1,0 +1,7 @@
+default:
+  short: Error inesperado
+  long: Mensaje no encontrado en el catálogo
+set:
+  greeting.hello:
+    short: Hola {{name}}
+    long: Hola {{name}}, bienvenido.

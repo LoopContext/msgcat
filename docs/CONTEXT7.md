@@ -90,7 +90,8 @@ Field behavior:
 type Message struct {
   LongText  string
   ShortText string
-  Code      int
+  Code      string // Optional; user-defined (e.g. "404", "ERR_001"). Empty when not set. Use Key when empty.
+  Key       string // Message key (e.g. "greeting.hello"); always set.
 }
 ```
 
@@ -106,12 +107,14 @@ Named template parameters. Use `msgcat.Params{"name": "juan", "count": 3}`.
 
 ```go
 type RawMessage struct {
-  LongTpl  string `yaml:"long"`
-  ShortTpl string `yaml:"short"`
-  Code     int    `yaml:"code"`
-  Key      string `yaml:"-"`  // required when using LoadMessages; must have prefix sys.
+  LongTpl  string       `yaml:"long"`
+  ShortTpl string       `yaml:"short"`
+  Code     OptionalCode `yaml:"code"` // Optional; any value. YAML: code: 404 or code: "ERR_001". Not unique.
+  Key      string       `yaml:"-"`    // required when using LoadMessages; must have prefix sys.
 }
 ```
+
+`OptionalCode` unmarshals from YAML as int or string. In Go use `msgcat.CodeInt(503)` or `msgcat.CodeString("ERR_MAINT")`.
 
 ### `type MessageCatalogStats struct`
 
@@ -175,11 +178,22 @@ Notes:
 
 ```go
 const (
-  RuntimeKeyPrefix   = "sys."
-  CodeMissingMessage  = 999999002
-  CodeMissingLanguage = 999999001
+  RuntimeKeyPrefix     = "sys."
+  CodeMissingMessage  = "msgcat.missing_message"
+  CodeMissingLanguage = "msgcat.missing_language"
 )
 ```
+
+## 7.1 Message and error codes (optional `code` field)
+
+Many projects already have **error or message codes** (HTTP statuses, legacy numbers, string ids like `ERR_NOT_FOUND`). The optional **`code`** field lets you **store that value** in the catalog and have it returned in `Message.Code` and `ErrorCode()` so your API can expose it as-is.
+
+- **Optional** — Omit `code` when you don’t need it; use `Message.Key` or `ErrorKey()` as the identifier when `Code` / `ErrorCode()` is empty.
+- **Any value** — Codes are strings. YAML accepts `code: 404` (becomes `"404"`) or `code: "ERR_NOT_FOUND"`. In Go: `msgcat.CodeInt(503)` or `msgcat.CodeString("ERR_MAINT")`.
+- **Not unique** — Uniqueness is not enforced. The same code can appear on multiple messages if that matches your design.
+- **Opaque to the catalog** — The library only stores and returns the value; meaning and uniqueness are entirely up to the caller.
+
+Use `code` when you need a stable, project-specific value for clients (e.g. status or error enums). Otherwise, rely on the message **key** as the identifier.
 
 ## 8. Language Resolution Algorithm
 
@@ -230,6 +244,8 @@ When `StrictTemplates=true` and a parameter is missing:
 - token is replaced with `<missing:paramName>`
 - observer/stats receives a template issue event
 
+Example strict placeholder: `"Hello {{name}}"` with params `nil` or missing `name` => `"Hello <missing:name>"`.
+
 When strict mode is off:
 - unresolved token is left as-is
 - issue is still recorded
@@ -250,11 +266,14 @@ Accepted date params:
 
 ## 11. Error Model
 
-`WrapErrorWithCtx` and `GetErrorWithCtx` return a concrete error with:
+`WrapErrorWithCtx` and `GetErrorWithCtx` return a concrete error implementing `msgcat.Error`:
 - `Error()` -> short localized message
-- `ErrorCode()` -> resolved code
+- `ErrorCode() string` -> optional; user-defined. Empty when not set. Use `ErrorKey()` when empty.
+- `ErrorKey()` -> message key; use as API identifier when `ErrorCode()` is empty
 - `GetShortMessage()` and `GetLongMessage()`
 - `Unwrap()` support for wrapped error chaining
+
+Code is optional and can be any value (string); uniqueness is not enforced. When empty, return `ErrorKey()` as the API value.
 
 ## 12. Runtime Loading and Reload
 
@@ -369,4 +388,173 @@ func main() {
 go test ./...
 go test -race ./...
 go test -run ^$ -bench . -benchmem ./...
+```
+
+## 19. Examples by API surface (for retrieval)
+
+Each snippet is self-contained for copy-paste or chunk retrieval. For runnable programs see the repository `examples/` directory: `basic`, `load_messages`, `reload`, `strict`, `stats`, `http`, `metrics`.
+
+### Example: NewMessageCatalog minimal
+
+```go
+catalog, err := msgcat.NewMessageCatalog(msgcat.Config{})
+// Uses ./resources/messages, DefaultLanguage "en", CtxLanguageKey "language"
+```
+
+### Example: NewMessageCatalog full config
+
+```go
+catalog, err := msgcat.NewMessageCatalog(msgcat.Config{
+  ResourcePath:      "./resources/messages",
+  CtxLanguageKey:    msgcat.ContextKey("language"),
+  DefaultLanguage:   "en",
+  FallbackLanguages: []string{"es"},
+  StrictTemplates:   true,
+  Observer:          myObserver,
+  ObserverBuffer:    1024,
+  StatsMaxKeys:      512,
+  ReloadRetries:     2,
+  ReloadRetryDelay:  50 * time.Millisecond,
+  NowFn:             time.Now,
+})
+```
+
+### Example: GetMessageWithCtx with nil params
+
+```go
+msg := catalog.GetMessageWithCtx(ctx, "greeting.hello", nil)
+// Use when message has no placeholders or default text is enough
+fmt.Println(msg.ShortText, msg.Code)
+```
+
+### Example: GetMessageWithCtx with Params
+
+```go
+msg := catalog.GetMessageWithCtx(ctx, "greeting.template", msgcat.Params{
+  "name": "juan", "detail": "admin",
+})
+```
+
+### Example: Simple placeholder {{name}}
+
+```go
+// YAML: short: "Hello {{name}}"
+msg := catalog.GetMessageWithCtx(ctx, "greeting.hello", msgcat.Params{"name": "juan"})
+```
+
+### Example: Plural placeholder {{plural:count|singular|plural}}
+
+```go
+// YAML: short: "You have {{count}} {{plural:count|item|items}}"
+msg := catalog.GetMessageWithCtx(ctx, "items.count", msgcat.Params{"count": 3})
+// => "You have 3 items"
+msg := catalog.GetMessageWithCtx(ctx, "items.count", msgcat.Params{"count": 1})
+// => "You have 1 item"
+```
+
+### Example: Number placeholder {{num:amount}}
+
+```go
+// YAML: short: "Total: {{num:amount}}"
+msg := catalog.GetMessageWithCtx(ctx, "report.total", msgcat.Params{"amount": 12345.67})
+// en => "Total: 12,345.67"; es => "Total: 12.345,67"
+```
+
+### Example: Date placeholder {{date:when}}
+
+```go
+// YAML: short: "Generated at {{date:when}}"
+msg := catalog.GetMessageWithCtx(ctx, "report.generated", msgcat.Params{"when": time.Now()})
+// en => MM/DD/YYYY; es/pt/fr/de/it => DD/MM/YYYY
+```
+
+### Example: GetErrorWithCtx
+
+```go
+err := catalog.GetErrorWithCtx(ctx, "error.not_found", msgcat.Params{"resource": "order"})
+fmt.Println(err.Error()) // short localized message
+```
+
+### Example: WrapErrorWithCtx and msgcat.Error
+
+```go
+inner := errors.New("db timeout")
+err := catalog.WrapErrorWithCtx(ctx, inner, "error.timeout", nil)
+var catErr msgcat.Error
+if errors.As(err, &catErr) {
+  catErr.ErrorCode()
+  catErr.GetShortMessage()
+  catErr.GetLongMessage()
+  catErr.Unwrap() // original inner
+}
+```
+
+### Example: LoadMessages with sys. prefix
+
+```go
+err := catalog.LoadMessages("en", []msgcat.RawMessage{{
+  Key:      "sys.maintenance",
+  ShortTpl: "Under maintenance",
+  LongTpl:  "Back in {{minutes}} minutes.",
+  Code:     503,
+}})
+msg := catalog.GetMessageWithCtx(ctx, "sys.maintenance", msgcat.Params{"minutes": 5})
+```
+
+### Example: Reload
+
+```go
+err := msgcat.Reload(catalog)
+// Re-reads YAML; runtime sys.* messages are preserved; on failure previous state kept
+```
+
+### Example: SnapshotStats and ResetStats
+
+```go
+stats, err := msgcat.SnapshotStats(catalog)
+_ = stats.LanguageFallbacks
+_ = stats.MissingMessages
+_ = stats.TemplateIssues
+err = msgcat.ResetStats(catalog)
+```
+
+### Example: Close (with observer)
+
+```go
+defer func() { _ = msgcat.Close(catalog) }()
+// Call on shutdown when Config.Observer is set; stops worker and flushes queue
+```
+
+### Example: Observer implementation
+
+```go
+type obs struct{}
+func (obs) OnLanguageFallback(req, res string) {}
+func (obs) OnLanguageMissing(lang string)       {}
+func (obs) OnMessageMissing(lang string, msgKey string) {}
+func (obs) OnTemplateIssue(lang string, msgKey string, issue string) {}
+catalog, _ := msgcat.NewMessageCatalog(msgcat.Config{Observer: obs{}, ObserverBuffer: 1024})
+```
+
+### Example: Context language (typed vs string key)
+
+```go
+ctx = context.WithValue(ctx, msgcat.ContextKey("language"), "es-MX")
+ctx = context.WithValue(ctx, "language", "es-MX")
+// Both are supported for CtxLanguageKey lookup
+```
+
+### Example: Missing message key
+
+```go
+msg := catalog.GetMessageWithCtx(ctx, "nonexistent.key", nil)
+// msg.Code == msgcat.CodeMissingMessage; short/long = default message for language
+```
+
+### Example: Missing language
+
+```go
+ctx = context.WithValue(ctx, "language", "zz")
+msg := catalog.GetMessageWithCtx(ctx, "greeting.hello", nil)
+// msg.Code == msgcat.CodeMissingLanguage; text = MessageCatalogNotFound
 ```

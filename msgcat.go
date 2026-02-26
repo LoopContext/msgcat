@@ -19,10 +19,10 @@ const MessageCatalogNotFound = "Unexpected error in message catalog, language [%
 
 const (
 	// RuntimeKeyPrefix is required for message keys loaded via LoadMessages (e.g. "sys.").
-	RuntimeKeyPrefix   = "sys."
-	CodeMissingMessage = 999999002
-	CodeMissingLanguage = 999999001
-	overflowStatKey    = "__overflow__"
+	RuntimeKeyPrefix     = "sys."
+	CodeMissingMessage  = "msgcat.missing_message"
+	CodeMissingLanguage = "msgcat.missing_language"
+	overflowStatKey     = "__overflow__"
 )
 
 // messageKeyRegex validates message keys: [a-zA-Z0-9_.-]+
@@ -810,6 +810,7 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgKey 
 			ShortText: fmt.Sprintf(MessageCatalogNotFound, requestedLang, ""),
 			LongText:  fmt.Sprintf(MessageCatalogNotFound, requestedLang, "Please, contact support."),
 			Code:      CodeMissingLanguage,
+			Key:       msgKey,
 		}
 	}
 	if usedFallback {
@@ -825,6 +826,7 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgKey 
 			ShortText: fmt.Sprintf(MessageCatalogNotFound, requestedLang, ""),
 			LongText:  fmt.Sprintf(MessageCatalogNotFound, requestedLang, "Please, contact support."),
 			Code:      CodeMissingLanguage,
+			Key:       msgKey,
 		}
 	}
 
@@ -835,7 +837,7 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgKey 
 	if msg, foundMsg := langMsgSet.Set[msgKey]; foundMsg {
 		shortMessage = msg.ShortTpl
 		longMessage = msg.LongTpl
-		code = msg.Code
+		code = string(msg.Code)
 	} else {
 		missingMessage = true
 	}
@@ -851,12 +853,13 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgKey 
 		LongText:  longMessage,
 		ShortText: shortMessage,
 		Code:      code,
+		Key:       msgKey,
 	}
 }
 
 func (dmc *DefaultMessageCatalog) WrapErrorWithCtx(ctx context.Context, err error, msgKey string, params Params) error {
 	message := dmc.GetMessageWithCtx(ctx, msgKey, params)
-	return newCatalogError(message.Code, message.ShortText, message.LongText, err)
+	return newCatalogError(message.Code, message.Key, message.ShortText, message.LongText, err)
 }
 
 func (dmc *DefaultMessageCatalog) GetErrorWithCtx(ctx context.Context, msgKey string, params Params) error {

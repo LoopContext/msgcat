@@ -140,25 +140,25 @@ All fields of `msgcat.Config`:
   Order: requested language → base tag (`es-ar` → `es`) → `FallbackLanguages` → `DefaultLanguage` → `"en"`. First language that exists in the catalog is used.
 
 - **YAML + runtime messages**  
-  Messages from YAML plus runtime-loaded entries via `LoadMessages` for codes **9000–9999** (system range).
+  Messages from YAML plus runtime-loaded entries via `LoadMessages`; keys must use the **`sys.`** prefix (e.g. `sys.alert`).
 
-- **Template tokens**
-  - `{{0}}`, `{{1}}`, … — positional parameters.
-  - `{{plural:i|singular|plural}}` — plural form by parameter at index `i`.
-  - `{{num:i}}` — localized number for parameter at index `i`.
-  - `{{date:i}}` — localized date for parameter at index `i` (`time.Time` or `*time.Time`).
+- **Template tokens (named parameters)**
+  - `{{name}}` — simple substitution.
+  - `{{plural:count|singular|plural}}` — plural form by named count parameter.
+  - `{{num:amount}}` — localized number for named parameter.
+  - `{{date:when}}` — localized date for named parameter (`time.Time` or `*time.Time`).
 
 - **Strict template mode**  
-  With `StrictTemplates: true`, missing or invalid params produce `<missing:N>` and observer events.
+  With `StrictTemplates: true`, missing or invalid params produce `<missing:paramName>` and observer events.
 
 - **Error wrapping**  
-  `WrapErrorWithCtx` and `GetErrorWithCtx` return errors implementing `msgcat.Error`: `ErrorCode()`, `GetShortMessage()`, `GetLongMessage()`, `Unwrap()`.
+  `WrapErrorWithCtx` and `GetErrorWithCtx` return errors implementing `msgcat.Error`: `ErrorCode() string` (optional), `ErrorKey()`, `GetShortMessage()`, `GetLongMessage()`, `Unwrap()`. See [Message and error codes](#message-and-error-codes).
 
 - **Concurrency**  
   Safe for concurrent reads; `LoadMessages` and `Reload` are safe to use concurrently with reads.
 
 - **Reload**  
-  `msgcat.Reload(catalog)` reloads YAML from disk with optional retries; runtime-loaded messages (9000–9999) are preserved. On failure, last in-memory state is kept.
+  `msgcat.Reload(catalog)` reloads YAML from disk with optional retries; runtime-loaded messages (keys with `sys.` prefix) are preserved. On failure, last in-memory state is kept.
 
 - **Observability**  
   Optional `Observer` plus stats via `SnapshotStats` / `ResetStats`. Observer runs asynchronously and is panic-safe; queue overflow is counted in stats.
@@ -179,9 +179,9 @@ All fields of `msgcat.Config`:
 ### Types
 
 - **`Params`** — `map[string]interface{}` for named template parameters (e.g. `msgcat.Params{"name": "juan"}`).
-- **`Message`** — `Code int`, `ShortText string`, `LongText string`.
-- **`RawMessage`** — `Key` (required for `LoadMessages`), `ShortTpl`, `LongTpl` (YAML: `short`, `long`), optional `Code` (YAML: `code`).
-- **`msgcat.Error`** — `Error() string`, `Unwrap() error`, `ErrorCode() int`, `GetShortMessage() string`, `GetLongMessage() string`.
+- **`Message`** — `ShortText`, `LongText`, `Code string` (optional; see [Message and error codes](#message-and-error-codes)), `Key string` (message key; use when `Code` is empty).
+- **`RawMessage`** — `Key` (required for `LoadMessages`), `ShortTpl`, `LongTpl`, optional `Code` (`OptionalCode`; see [Message and error codes](#message-and-error-codes)).
+- **`msgcat.Error`** — `Error()`, `Unwrap()`, `ErrorCode() string` (optional), `ErrorKey() string` (use when `ErrorCode()` is empty), `GetShortMessage()`, `GetLongMessage()`.
 
 ### Package-level helpers
 
@@ -198,8 +198,21 @@ All fields of `msgcat.Config`:
 | Constant | Value | Description |
 |----------|--------|-------------|
 | `RuntimeKeyPrefix` | `"sys."` | Required prefix for message keys loaded via `LoadMessages`. |
-| `CodeMissingMessage`  | 999999002 | Code used when a message key is missing in the catalog. |
-| `CodeMissingLanguage` | 999999001 | Code used when the language is missing. |
+| `CodeMissingMessage`  | `"msgcat.missing_message"` | Code used when a message key is missing in the catalog. |
+| `CodeMissingLanguage` | `"msgcat.missing_language"` | Code used when the language is missing. |
+
+## Message and error codes
+
+Many projects already use **error or message codes** (HTTP statuses, legacy numeric codes, string identifiers like `ERR_NOT_FOUND`). The optional **`code`** field in the catalog lets you **store that value** with each message and have it returned in `Message.Code` and `ErrorCode()` so your API can expose it unchanged.
+
+- **Optional** — You can omit `code` entirely. When empty, use `Message.Key` or `ErrorKey()` as the stable identifier for clients (e.g. in JSON: `"error_code": msg.Code or msg.Key`).
+- **Any value** — Codes are strings. In YAML you can write `code: 404` (parsed as `"404"`) or `code: "ERR_NOT_FOUND"`. In Go use `msgcat.CodeInt(503)` or `msgcat.CodeString("ERR_MAINT")`.
+- **Not unique** — The catalog does not require codes to be unique. If your design uses the same code for several messages (e.g. same HTTP status for different keys), you can repeat the same `code` value.
+- **Your identifier** — The catalog never interprets the code; it only stores and returns it. You decide what values to use and how to expose them in your API.
+
+**When to set a code:** Use it when you need a stable, project-specific value to return to clients (status codes, error enums, etc.). When you don’t, leave it unset and use the message **key** as the identifier.
+
+Helpers for building `RawMessage.Code` in code: `msgcat.CodeInt(503)`, `msgcat.CodeString("ERR_NOT_FOUND")`.
 
 ## Observability
 
@@ -247,6 +260,183 @@ if err == nil {
 
 ---
 
+## API examples (every nook and cranny)
+
+All of the following assume a catalog and context are set up; use your own YAML keys and params as needed.
+
+### Create catalog (minimal vs full config)
+
+```go
+// Minimal: uses ./resources/messages, language "en", no observer
+catalog, err := msgcat.NewMessageCatalog(msgcat.Config{})
+
+// Full: custom path, fallbacks, strict templates, observer, reload retries
+catalog, err := msgcat.NewMessageCatalog(msgcat.Config{
+  ResourcePath:      "./resources/messages",
+  CtxLanguageKey:    msgcat.ContextKey("language"), // typed key
+  DefaultLanguage:   "en",
+  FallbackLanguages: []string{"es", "pt"},
+  StrictTemplates:   true,
+  Observer:          myObserver,
+  ObserverBuffer:    1024,
+  StatsMaxKeys:      512,
+  ReloadRetries:     2,
+  ReloadRetryDelay:  50 * time.Millisecond,
+  NowFn:             time.Now,
+})
+```
+
+### GetMessageWithCtx: no params vs named params
+
+```go
+// No template params: pass nil
+msg := catalog.GetMessageWithCtx(ctx, "greeting.hello", nil)
+fmt.Println(msg.ShortText, msg.LongText, msg.Code)
+
+// Named params: use Params map
+msg := catalog.GetMessageWithCtx(ctx, "greeting.template", msgcat.Params{
+  "name":   "juan",
+  "detail": "admin",
+})
+```
+
+### Template placeholders: simple, plural, number, date
+
+```go
+// Simple: {{name}}, {{detail}}, etc.
+msg := catalog.GetMessageWithCtx(ctx, "greeting.template", msgcat.Params{
+  "name": "juan", "detail": "nice",
+})
+
+// Plural: {{count}} and {{plural:count|item|items}}
+msg := catalog.GetMessageWithCtx(ctx, "items.count", msgcat.Params{
+  "count": 3,
+})
+
+// Number: {{num:amount}} (localized thousands/decimal)
+msg := catalog.GetMessageWithCtx(ctx, "report.total", msgcat.Params{
+  "amount": 12345.67,
+})
+
+// Date: {{date:when}} (localized format)
+msg := catalog.GetMessageWithCtx(ctx, "report.generated", msgcat.Params{
+  "when": time.Now(),
+})
+
+// All together
+msg := catalog.GetMessageWithCtx(ctx, "items.count", msgcat.Params{
+  "count": 3, "amount": 12345.5, "generatedAt": time.Now(),
+})
+```
+
+### GetErrorWithCtx and WrapErrorWithCtx
+
+```go
+// Error without wrapping an underlying error
+err := catalog.GetErrorWithCtx(ctx, "error.not_found", msgcat.Params{"resource": "order"})
+fmt.Println(err.Error()) // short message
+
+// Wrap a domain error with localized message
+inner := errors.New("db: connection timeout")
+err := catalog.WrapErrorWithCtx(ctx, inner, "error.timeout", nil)
+if catErr, ok := err.(msgcat.Error); ok {
+  fmt.Println(catErr.Error())           // short message
+  fmt.Println(catErr.ErrorCode())       // optional; empty when not set in catalog
+  fmt.Println(catErr.ErrorKey())        // message key; use as API id when ErrorCode() is empty
+  fmt.Println(catErr.GetShortMessage())
+  fmt.Println(catErr.GetLongMessage())
+  fmt.Println(catErr.Unwrap() == inner) // true
+}
+```
+
+**Code** is optional: use it to store your own error/message codes (e.g. HTTP status, `"ERR_001"`) and return them from the API. When empty, use `Message.Key` or `ErrorKey()`. See [Message and error codes](#message-and-error-codes).
+
+### LoadMessages (runtime messages with sys. prefix)
+
+```go
+err := catalog.LoadMessages("en", []msgcat.RawMessage{
+  {
+    Key:      "sys.maintenance",
+    ShortTpl: "Service under maintenance",
+    LongTpl:  "The service is temporarily unavailable. Try again in {{minutes}} minutes.",
+    Code:     503,
+  },
+})
+// Then use the key like any other
+msg := catalog.GetMessageWithCtx(ctx, "sys.maintenance", msgcat.Params{"minutes": 5})
+```
+
+### Reload, stats, close
+
+```go
+// Reload YAML from disk (keeps runtime-loaded sys.* messages)
+err := msgcat.Reload(catalog)
+
+// Snapshot current stats (safe concurrent read)
+stats, err := msgcat.SnapshotStats(catalog)
+if err == nil {
+  for k, n := range stats.MissingMessages { fmt.Println(k, n) }
+}
+
+// Reset all counters to zero
+err = msgcat.ResetStats(catalog)
+
+// On shutdown when using an observer: stop worker and flush queue
+err = msgcat.Close(catalog)
+```
+
+### Language from context (typed key vs string key)
+
+```go
+// Both work: typed ContextKey or plain string
+ctx = context.WithValue(ctx, msgcat.ContextKey("language"), "es-MX")
+ctx = context.WithValue(ctx, "language", "es-MX")
+msg := catalog.GetMessageWithCtx(ctx, "greeting.hello", nil)
+```
+
+### Observer implementation
+
+```go
+type myObserver struct{}
+
+func (myObserver) OnLanguageFallback(requested, resolved string) {
+  log.Printf("fallback %s -> %s", requested, resolved)
+}
+func (myObserver) OnLanguageMissing(lang string) {
+  log.Printf("missing language: %s", lang)
+}
+func (myObserver) OnMessageMissing(lang string, msgKey string) {
+  log.Printf("missing message %s:%s", lang, msgKey)
+}
+func (myObserver) OnTemplateIssue(lang string, msgKey string, issue string) {
+  log.Printf("template issue %s:%s: %s", lang, msgKey, issue)
+}
+
+catalog, _ := msgcat.NewMessageCatalog(msgcat.Config{
+  Observer:       myObserver{},
+  ObserverBuffer: 1024,
+})
+```
+
+### Missing message / missing language
+
+```go
+// Unknown key: returns default message for that language, Code = CodeMissingMessage (string)
+msg := catalog.GetMessageWithCtx(ctx, "unknown.key", nil)
+if msg.Code == msgcat.CodeMissingMessage {
+  // key was not in catalog
+}
+
+// Requested language not in catalog: uses MessageCatalogNotFound text, Code = CodeMissingLanguage (string)
+ctx = context.WithValue(ctx, "language", "xx")
+msg := catalog.GetMessageWithCtx(ctx, "greeting.hello", nil)
+if msg.Code == msgcat.CodeMissingLanguage {
+  // no language match in catalog
+}
+```
+
+---
+
 ## Production notes
 
 - Set `DefaultLanguage` explicitly (e.g. `"en"`).
@@ -278,8 +468,19 @@ go test -run ^$ -bench . -benchmem ./...
 
 ## Examples
 
-- HTTP language middleware: `examples/http/main.go`
-- Metrics/observer (expvar-style): `examples/metrics/main.go`
+Runnable programs (each uses a temp dir and minimal YAML so you can run from any directory):
+
+| Example | What it demonstrates |
+|---------|----------------------|
+| `examples/basic` | NewMessageCatalog, GetMessageWithCtx (nil and with Params), GetErrorWithCtx, WrapErrorWithCtx, msgcat.Error |
+| `examples/load_messages` | LoadMessages with `sys.` prefix, using runtime-loaded keys |
+| `examples/reload` | Reload(catalog) to re-read YAML from disk |
+| `examples/strict` | StrictTemplates and observer for missing template params |
+| `examples/stats` | SnapshotStats, ResetStats, stat keys |
+| `examples/http` | HTTP server with language from Accept-Language and GetMessageWithCtx |
+| `examples/metrics` | Observer (expvar-style) and Close on shutdown |
+
+Run from repo root: `go run ./examples/basic`, `go run ./examples/load_messages`, etc.
 
 ---
 
