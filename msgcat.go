@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/loopcontext/msgcat/internal/plural"
 	"gopkg.in/yaml.v2"
 )
 
@@ -338,6 +339,53 @@ func isPluralOne(value interface{}) (bool, bool) {
 	default:
 		return false, false
 	}
+}
+
+// pluralCountFromParam converts a param value to int for CLDR plural form selection.
+func pluralCountFromParam(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int8:
+		return int(typed), true
+	case int16:
+		return int(typed), true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case uint:
+		return int(typed), true
+	case uint8:
+		return int(typed), true
+	case uint16:
+		return int(typed), true
+	case uint32:
+		return int(typed), true
+	case uint64:
+		return int(typed), true
+	case float32:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	default:
+		return 0, false
+	}
+}
+
+// selectCLDRForm returns the template string from forms for the given lang and count, with fallback to other then defaultTpl.
+func selectCLDRForm(forms map[string]string, lang string, count int, defaultTpl string) string {
+	if len(forms) == 0 {
+		return defaultTpl
+	}
+	form := plural.Form(lang, count)
+	if tpl, ok := forms[form]; ok && tpl != "" {
+		return tpl
+	}
+	if tpl, ok := forms["other"]; ok && tpl != "" {
+		return tpl
+	}
+	return defaultTpl
 }
 
 // parsePluralTokenNamed extracts param name, singular and plural from {{plural:name|singular|plural}}.
@@ -834,10 +882,25 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgKey 
 	longMessage := langMsgSet.Default.LongTpl
 	code := CodeMissingMessage
 	missingMessage := false
-	if msg, foundMsg := langMsgSet.Set[msgKey]; foundMsg {
+	if msg, ok := langMsgSet.Set[msgKey]; ok {
 		shortMessage = msg.ShortTpl
 		longMessage = msg.LongTpl
 		code = string(msg.Code)
+		// CLDR plural forms: when ShortForms/LongForms are set, select by plural param and language
+		if len(msg.ShortForms) > 0 || len(msg.LongForms) > 0 {
+			pluralParam := msg.PluralParam
+			if pluralParam == "" {
+				pluralParam = "count"
+			}
+			paramMap := map[string]interface{}(params)
+			if paramMap == nil {
+				paramMap = map[string]interface{}{}
+			}
+			if countVal, ok := pluralCountFromParam(paramMap[pluralParam]); ok {
+				shortMessage = selectCLDRForm(msg.ShortForms, resolvedLang, countVal, shortMessage)
+				longMessage = selectCLDRForm(msg.LongForms, resolvedLang, countVal, longMessage)
+			}
+		}
 	} else {
 		missingMessage = true
 	}
@@ -847,6 +910,9 @@ func (dmc *DefaultMessageCatalog) GetMessageWithCtx(ctx context.Context, msgKey 
 	}
 
 	paramMap := map[string]interface{}(params)
+	if paramMap == nil {
+		paramMap = map[string]interface{}{}
+	}
 	shortMessage = dmc.renderTemplate(resolvedLang, msgKey, shortMessage, paramMap)
 	longMessage = dmc.renderTemplate(resolvedLang, msgKey, longMessage, paramMap)
 	return &Message{

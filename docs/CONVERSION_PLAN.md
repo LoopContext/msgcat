@@ -92,7 +92,7 @@ set:
     short: Hello short description
     long: Hello veeery long description.
   greeting.template:
-    code: 1002   # optional: numeric code for API/HTTP
+    code: 1002   # optional (stored as string; see §12)
     short: Hello template {{name}}, this is nice {{detail}}
     long: Hello veeery long {{name}} description. Details {{detail}}.
   items.count:
@@ -101,7 +101,7 @@ set:
 ```
 
 - **Key format**: recommend `[a-zA-Z0-9_.-]+` (e.g. `greeting.hello`, `error.not_found`). Reject empty or invalid keys in validation.
-- **Optional `code`**: if present, use as `Message.Code`; if absent, use 0 (or define a convention).
+- **Optional `code`**: if present, use as `Message.Code`; if absent, empty string (see §12).
 
 ---
 
@@ -157,7 +157,7 @@ type MessageCatalog interface {
 - **normalizeAndValidateMessages**
   - Remove Group validation.
   - Ensure `Set` is `map[string]RawMessage`.
-  - For each key in Set: validate key format (non-empty, allowed chars); set `raw.Code` from YAML `code` if present (else leave 0); no longer set `raw.Code = code` from numeric key.
+  - For each key in Set: validate key format (non-empty, allowed chars); set `raw.Code` from YAML `code` if present (else leave empty; see §12); no longer set `raw.Code = code` from numeric key.
 
 ### 6.2 loadFromYaml merge
 
@@ -168,7 +168,7 @@ type MessageCatalog interface {
 - Signature: `(ctx, msgKey string, params Params)`.
 - Resolve language as today.
 - Lookup: `langMsgSet.Set[msgKey]`; if missing, call `onMessageMissing(resolvedLang, msgKey)` and use default message, set `Message.Code = CodeMissingMessage`.
-- If found: use `raw.ShortTpl`, `raw.LongTpl`, and `Message.Code = raw.Code` (0 if not set).
+- If found: use `raw.ShortTpl`, `raw.LongTpl`, and `Message.Code = raw.Code` (empty string if not set; see §12).
 - Call `renderTemplate(resolvedLang, msgKey, shortMessage, params)` (and same for long); pass `params` as `map[string]interface{}`.
 
 ### 6.4 renderTemplate

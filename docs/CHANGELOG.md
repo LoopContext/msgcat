@@ -7,6 +7,11 @@ This project follows Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- **CLDR plural forms:** optional `short_forms` / `long_forms` on `RawMessage` (keys: zero, one, two, few, many, other) and `plural_param` (default `count`). `internal/plural` selects form by language and count. Binary `{{plural:count|singular|plural}}` unchanged.
+- **MessageDef:** type for defining messages in Go (Key, Short, Long, ShortForms, LongForms, PluralParam, Code). **msgcat extract -source** finds MessageDef struct literals and merges their content into source YAML.
+- **Optional group:** `Messages.Group` and `OptionalGroup` (int or string in YAML, e.g. `group: 0` or `group: "api"`). CLI extract/merge preserve group.
+- CLI **extract** (keys from GetMessageWithCtx/WrapErrorWithCtx/GetErrorWithCtx; sync to YAML with MessageDef merge) and **merge** (translate.\<lang\>.yaml with group and plural fields copied).
+- Examples: `cldr_plural`, `msgdef`. Docs: CLI_WORKFLOW_PLAN, CLDR_AND_GO_MESSAGES_PLAN.
 - String message keys (e.g. `"greeting.hello"`) instead of numeric codes for lookup.
 - Named template parameters: `{{name}}`, `{{plural:count|...}}`, `{{num:amount}}`, `{{date:when}}` with `msgcat.Params`.
 - Optional string `code` field: any value (e.g. `"404"`, `"ERR_NOT_FOUND"`); not unique. YAML accepts `code: 404` or `code: "ERR_001"`. Helpers `CodeInt()`, `CodeString()`.

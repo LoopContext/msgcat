@@ -2,7 +2,7 @@
 
 Purpose: compact, chunk-friendly reference for LLM retrieval/indexing.
 
-Runnable examples: `examples/basic`, `examples/load_messages`, `examples/reload`, `examples/strict`, `examples/stats`, `examples/http`, `examples/metrics`.
+Runnable examples: `examples/basic`, `examples/cldr_plural`, `examples/msgdef`, `examples/load_messages`, `examples/reload`, `examples/strict`, `examples/stats`, `examples/http`, `examples/metrics`.
 
 ## C01_IDENTITY
 - Module: `github.com/loopcontext/msgcat`
@@ -13,9 +13,11 @@ Runnable examples: `examples/basic`, `examples/load_messages`, `examples/reload`
 - Load localized messages from YAML by language.
 - Resolve language from `context.Context`.
 - Fallback chain for missing regional/language variants.
-- Render templates with named parameters (plural/number/date tokens).
+- Render templates with named parameters (binary plural token + optional CLDR short_forms/long_forms; number/date tokens).
 - Wrap errors with localized short/long text and code.
 - Runtime reload + runtime-loaded messages (key prefix `sys.`).
+- Optional CLDR plural forms (short_forms/long_forms) and optional group (int or string) in YAML.
+- MessageDef: define messages in Go; CLI **msgcat extract -source** merges into YAML.
 - Observability hooks + in-memory counters.
 - Concurrency-safe operations.
 
@@ -47,16 +49,20 @@ Defaults:
 
 ## C04_YAML_SCHEMA
 ```yaml
+group: int | string   # optional (e.g. group: 0 or group: "api")
 default:
   short: string
   long: string
 set:
-  <key>:   # e.g. greeting.hello, error.not_found
-    code: int | string   # optional (YAML accepts either)
+  <key>:
+    code: int | string
     short: string
     long: string
+    short_forms: { zero?, one?, two?, few?, many?, other? }   # optional CLDR
+    long_forms:  { zero?, one?, two?, few?, many?, other? }
+    plural_param: string   # default "count"
 ```
-Keys: `[a-zA-Z0-9_.-]+`. Templates use named params: `{{name}}`, `{{plural:count|a|b}}`, `{{num:amount}}`, `{{date:when}}`.
+Keys: `[a-zA-Z0-9_.-]+`. Templates: `{{name}}`, `{{plural:count|a|b}}`, `{{num:amount}}`, `{{date:when}}`. Optional CLDR forms: see docs/CLDR_AND_GO_MESSAGES_PLAN.md.
 Validation:
 - default short/long: at least one non-empty
 - `set` omitted => initialized empty
@@ -316,7 +322,7 @@ err := catalog.LoadMessages("en", []msgcat.RawMessage{{
   Key:      "sys.maintenance",
   ShortTpl: "Under maintenance",
   LongTpl:  "Back in {{minutes}} minutes.",
-  Code:     503,
+  Code:     msgcat.CodeInt(503),
 }})
 msg := catalog.GetMessageWithCtx(ctx, "sys.maintenance", msgcat.Params{"minutes": 5})
 ```

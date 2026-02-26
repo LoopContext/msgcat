@@ -32,8 +32,9 @@ One YAML file per language (e.g. `en.yaml`, `es.yaml`). Structure:
 
 | Field     | Description |
 |----------|-------------|
+| `group`  | Optional. Int or string (e.g. `group: 0` or `group: "api"`) for organization; catalog does not interpret it. See [Optional group](#optional-group). |
 | `default`| Used when a message key is missing: `short` and `long` templates. |
-| `set`    | Map of string message key → entry with optional `code`, `short`, `long`. Keys use `[a-zA-Z0-9_.-]+` (e.g. `greeting.hello`, `error.not_found`). |
+| `set`    | Map of string message key → entry with optional `code`, `short`, `long`; optional **`short_forms`** / **`long_forms`** (CLDR: zero, one, two, few, many, other), **`plural_param`** (default `count`). Keys use `[a-zA-Z0-9_.-]+`. |
 
 Templates use **named parameters**: `{{name}}`, `{{plural:count\|singular\|plural}}`, `{{num:amount}}`, `{{date:when}}`.
 
@@ -95,7 +96,7 @@ ctx := context.WithValue(context.Background(), "language", "es-AR")
 msg := catalog.GetMessageWithCtx(ctx, "greeting.hello", msgcat.Params{"name": "juan"})
 fmt.Println(msg.ShortText) // "Usuario creado"
 fmt.Println(msg.LongText)  // "Usuario juan fue creado correctamente"
-fmt.Println(msg.Code)      // 1 (from YAML optional `code`)
+fmt.Println(msg.Code)      // "1" (from YAML optional code; Code is string)
 
 params := msgcat.Params{"count": 3, "amount": 12345.5, "when": time.Now()}
 err := catalog.WrapErrorWithCtx(ctx, errors.New("db timeout"), "items.count", params)
@@ -144,9 +145,13 @@ All fields of `msgcat.Config`:
 
 - **Template tokens (named parameters)**
   - `{{name}}` — simple substitution.
-  - `{{plural:count|singular|plural}}` — plural form by named count parameter.
+  - `{{plural:count|singular|plural}}` — binary plural by named count parameter.
+  - **CLDR plural forms** — optional `short_forms` / `long_forms` per entry (keys: `zero`, `one`, `two`, `few`, `many`, `other`) for full locale rules; see [CLDR and messages in Go](docs/CLDR_AND_GO_MESSAGES_PLAN.md).
   - `{{num:amount}}` — localized number for named parameter.
   - `{{date:when}}` — localized date for named parameter (`time.Time` or `*time.Time`).
+
+- **Messages in Go**  
+  Define content with **`msgcat.MessageDef`** (Key, Short, Long, or ShortForms/LongForms, Code). Run **`msgcat extract -source en.yaml -out en.yaml .`** to merge those definitions into your source YAML.
 
 - **Strict template mode**  
   With `StrictTemplates: true`, missing or invalid params produce `<missing:paramName>` and observer events.
@@ -162,6 +167,59 @@ All fields of `msgcat.Config`:
 
 - **Observability**  
   Optional `Observer` plus stats via `SnapshotStats` / `ResetStats`. Observer runs asynchronously and is panic-safe; queue overflow is counted in stats.
+
+### Optional group
+
+Message files can include an optional top-level **`group`** with an integer or string value (e.g. `group: 0` or `group: "api"`). Use it to tag files for organization or tooling. The catalog does not interpret group; it only stores it. The CLI preserves `group` when running `extract` (sync) and `merge`.
+
+```yaml
+group: api
+default:
+  short: Unexpected error
+  long: ...
+set:
+  error.not_found:
+    short: Not found
+    long: ...
+```
+
+---
+
+## CLI workflow (extract & merge)
+
+The **msgcat** CLI helps discover message keys from Go code and prepare translation files.
+
+**Install:**
+
+```bash
+go install github.com/loopcontext/msgcat/cmd/msgcat@latest
+```
+
+**Extract (keys only)** — list message keys used in Go (e.g. in `GetMessageWithCtx`, `WrapErrorWithCtx`, `GetErrorWithCtx`):
+
+```bash
+msgcat extract [paths]              # print keys to stdout (default: current dir)
+msgcat extract -out keys.txt .      # write keys to file
+msgcat extract -include-tests .     # include _test.go files
+```
+
+**Extract (sync to source YAML)** — add keys from API calls (empty `short`/`long`) and **merge `msgcat.MessageDef`** struct literals from Go (full content) into your source file:
+
+```bash
+msgcat extract -source resources/messages/en.yaml -out resources/messages/en.yaml .
+```
+
+**Merge** — produce `translate.<lang>.yaml` files from a source file. For each target language, missing or empty entries use source text as placeholder; existing translations are kept. Copies `group` and `default` from source.
+
+```bash
+msgcat merge -source resources/messages/en.yaml -targetLangs es,fr -outdir resources/messages
+# Creates translate.es.yaml, translate.fr.yaml
+
+msgcat merge -source resources/messages/en.yaml -targetDir resources/messages -outdir resources/messages
+# Infers target languages from existing *.yaml in targetDir (excluding source and translate.*)
+```
+
+After translators fill `translate.es.yaml`, rename or copy it to `es.yaml` for runtime.
 
 ---
 
@@ -180,7 +238,8 @@ All fields of `msgcat.Config`:
 
 - **`Params`** — `map[string]interface{}` for named template parameters (e.g. `msgcat.Params{"name": "juan"}`).
 - **`Message`** — `ShortText`, `LongText`, `Code string` (optional; see [Message and error codes](#message-and-error-codes)), `Key string` (message key; use when `Code` is empty).
-- **`RawMessage`** — `Key` (required for `LoadMessages`), `ShortTpl`, `LongTpl`, optional `Code` (`OptionalCode`; see [Message and error codes](#message-and-error-codes)).
+- **`RawMessage`** — `Key` (required for `LoadMessages`), `ShortTpl`, `LongTpl`, optional `Code`; optional **`ShortForms`** / **`LongForms`** (CLDR plural maps), **`PluralParam`** (default `"count"`).
+- **`MessageDef`** — For “messages in Go”: `Key`, `Short`, `Long`, optional `ShortForms` / `LongForms`, `PluralParam`, `Code`. Use with **msgcat extract -source** to merge into YAML.
 - **`msgcat.Error`** — `Error()`, `Unwrap()`, `ErrorCode() string` (optional), `ErrorKey() string` (use when `ErrorCode()` is empty), `GetShortMessage()`, `GetLongMessage()`.
 
 ### Package-level helpers
@@ -359,7 +418,7 @@ err := catalog.LoadMessages("en", []msgcat.RawMessage{
     Key:      "sys.maintenance",
     ShortTpl: "Service under maintenance",
     LongTpl:  "The service is temporarily unavailable. Try again in {{minutes}} minutes.",
-    Code:     503,
+    Code:     msgcat.CodeInt(503),
   },
 })
 // Then use the key like any other
@@ -473,6 +532,8 @@ Runnable programs (each uses a temp dir and minimal YAML so you can run from any
 | Example | What it demonstrates |
 |---------|----------------------|
 | `examples/basic` | NewMessageCatalog, GetMessageWithCtx (nil and with Params), GetErrorWithCtx, WrapErrorWithCtx, msgcat.Error |
+| `examples/cldr_plural` | CLDR plural forms (short_forms/long_forms) with one/other and plural_param |
+| `examples/msgdef` | MessageDef in Go and extract workflow |
 | `examples/load_messages` | LoadMessages with `sys.` prefix, using runtime-loaded keys |
 | `examples/reload` | Reload(catalog) to re-read YAML from disk |
 | `examples/strict` | StrictTemplates and observer for missing template params |
@@ -495,3 +556,5 @@ Run from repo root: `go run ./examples/basic`, `go run ./examples/load_messages`
 | [SECURITY.md](SECURITY.md) | How to report vulnerabilities. |
 | [Context7](docs/CONTEXT7.md) | Machine-friendly API docs. |
 | [Context7 retrieval](docs/CONTEXT7_RETRIEVAL.md) | Retrieval-oriented chunks. |
+| [CLI workflow plan](docs/CLI_WORKFLOW_PLAN.md) | Extract and merge workflow; optional group. |
+| [CLDR and messages in Go](docs/CLDR_AND_GO_MESSAGES_PLAN.md) | CLDR plurals and MessageDef + extract (roadmap). |

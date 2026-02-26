@@ -34,6 +34,7 @@ Each language file is named `<lang>.yaml`, for example `en.yaml`, `es.yaml`.
 ### Schema
 
 ```yaml
+group: int | string   # optional (e.g. group: 0 or group: "api"); catalog does not interpret it
 default:
   short: string
   long: string
@@ -42,9 +43,12 @@ set:
     code: int | string   # optional (YAML accepts either; stored as string)
     short: string
     long: string
+    short_forms: { zero?, one?, two?, few?, many?, other? }   # optional CLDR plural forms
+    long_forms:  { zero?, one?, two?, few?, many?, other? }
+    plural_param: string   # optional; param name for plural selection (default "count")
 ```
 
-Keys use `[a-zA-Z0-9_.-]+`. Templates use **named parameters**: `{{name}}`, `{{plural:count|singular|plural}}`, `{{num:amount}}`, `{{date:when}}`.
+Keys use `[a-zA-Z0-9_.-]+`. Templates use **named parameters**: `{{name}}`, `{{plural:count|singular|plural}}`, `{{num:amount}}`, `{{date:when}}`. Optional **CLDR forms** (short_forms/long_forms) use the plural param and resolved language to pick a form; see docs/CLDR_AND_GO_MESSAGES_PLAN.md.
 
 ### Validation rules
 
@@ -107,14 +111,33 @@ Named template parameters. Use `msgcat.Params{"name": "juan", "count": 3}`.
 
 ```go
 type RawMessage struct {
-  LongTpl  string       `yaml:"long"`
-  ShortTpl string       `yaml:"short"`
-  Code     OptionalCode `yaml:"code"` // Optional; any value. YAML: code: 404 or code: "ERR_001". Not unique.
-  Key      string       `yaml:"-"`    // required when using LoadMessages; must have prefix sys.
+  LongTpl     string            `yaml:"long"`
+  ShortTpl    string            `yaml:"short"`
+  Code        OptionalCode      `yaml:"code"`
+  ShortForms  map[string]string  `yaml:"short_forms,omitempty"`  // optional CLDR: zero, one, two, few, many, other
+  LongForms   map[string]string  `yaml:"long_forms,omitempty"`
+  PluralParam string            `yaml:"plural_param,omitempty"`  // default "count"
+  Key         string            `yaml:"-"`   // required when using LoadMessages; must have prefix sys.
 }
 ```
 
 `OptionalCode` unmarshals from YAML as int or string. In Go use `msgcat.CodeInt(503)` or `msgcat.CodeString("ERR_MAINT")`.
+
+### `type MessageDef struct`
+
+Used for "messages in Go": define content in code and run **msgcat extract -source en.yaml -out en.yaml .** to merge into YAML.
+
+```go
+type MessageDef struct {
+  Key         string
+  Short       string
+  Long        string
+  ShortForms  map[string]string  // optional CLDR forms
+  LongForms   map[string]string
+  PluralParam string
+  Code        OptionalCode
+}
+```
 
 ### `type MessageCatalogStats struct`
 
@@ -496,7 +519,7 @@ err := catalog.LoadMessages("en", []msgcat.RawMessage{{
   Key:      "sys.maintenance",
   ShortTpl: "Under maintenance",
   LongTpl:  "Back in {{minutes}} minutes.",
-  Code:     503,
+  Code:     msgcat.CodeInt(503),
 }})
 msg := catalog.GetMessageWithCtx(ctx, "sys.maintenance", msgcat.Params{"minutes": 5})
 ```
