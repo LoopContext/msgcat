@@ -92,7 +92,7 @@ set:
     short: Hello short description
     long: Hello veeery long description.
   greeting.template:
-    code: 1002   # optional (stored as string; see §12)
+    code: GREETING   # optional (stored as string; see §12)
     short: Hello template {{name}}, this is nice {{detail}}
     long: Hello veeery long {{name}} description. Details {{detail}}.
   items.count:

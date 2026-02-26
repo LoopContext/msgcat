@@ -46,7 +46,7 @@ default:
   long: Unexpected message was received and was not found in this catalog
 set:
   greeting.hello:
-    code: 1
+    code: GREETING_HELLO
     short: User created
     long: User {{name}} was created successfully
   items.count:
@@ -64,6 +64,7 @@ default:
   long: Se recibió un mensaje inesperado y no se encontró en el catálogo
 set:
   greeting.hello:
+    code: GREETING_HELLO
     short: Usuario creado
     long: Usuario {{name}} fue creado correctamente
   items.count:
@@ -98,7 +99,7 @@ ctx := context.WithValue(context.Background(), "language", "es-AR")
 msg := catalog.GetMessageWithCtx(ctx, "greeting.hello", msgcat.Params{"name": "juan"})
 fmt.Println(msg.ShortText) // "Usuario creado"
 fmt.Println(msg.LongText)  // "Usuario juan fue creado correctamente"
-fmt.Println(msg.Code)      // "1" (from YAML optional code; Code is string)
+fmt.Println(msg.Code)      // "GREETING_HELLO" (from YAML optional code; Code is string)
 
 params := msgcat.Params{"count": 3, "amount": 12345.5, "when": time.Now()}
 err := catalog.WrapErrorWithCtx(ctx, errors.New("db timeout"), "items.count", params)
@@ -268,11 +269,11 @@ After translators fill `translate.es.yaml`, rename or copy it to `es.yaml` for r
 Many projects already use **error or message codes** (HTTP statuses, legacy numeric codes, string identifiers like `ERR_NOT_FOUND`). The optional **`code`** field in the catalog lets you **store that value** with each message and have it returned in `Message.Code` and `ErrorCode()` so your API can expose it unchanged.
 
 - **Optional** — You can omit `code` entirely. When empty, use `Message.Key` or `ErrorKey()` as the stable identifier for clients (e.g. in JSON: `"error_code": msg.Code or msg.Key`).
-- **Any value** — Codes are strings. In YAML you can write `code: 404` (parsed as `"404"`) or `code: "ERR_NOT_FOUND"`. In Go use `msgcat.CodeInt(503)` or `msgcat.CodeString("ERR_MAINT")`.
+- **Any value** — Codes are strings. In YAML you can write `code: ERR_NOT_FOUND` or `code: "404"`. In Go use `msgcat.CodeString("ERR_MAINT")` or `msgcat.CodeInt(503)`.
 - **Not unique** — The catalog does not require codes to be unique. If your design uses the same code for several messages (e.g. same HTTP status for different keys), you can repeat the same `code` value.
 - **Your identifier** — The catalog never interprets the code; it only stores and returns it. You decide what values to use and how to expose them in your API.
 
-**When to set a code:** Use it when you need a stable, project-specific value to return to clients (status codes, error enums, etc.). When you don’t, leave it unset and use the message **key** as the identifier.
+**When to set a code:** Use it when you need a stable, project-specific value to return to clients (status codes, error enums, etc.). Strings are generally preferred over integers as they are more descriptive (e.g., `code: ERR_ACCESS_DENIED` instead of `code: 403`). When you don’t need a separate code, leave it unset and use the message **key** as the identifier.
 
 Helpers for building `RawMessage.Code` in code: `msgcat.CodeInt(503)`, `msgcat.CodeString("ERR_NOT_FOUND")`.
 

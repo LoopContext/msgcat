@@ -40,7 +40,7 @@ set:
 			Key:      "sys.maintenance",
 			ShortTpl: "Under maintenance",
 			LongTpl:  "Back in {{minutes}} minutes.",
-			Code:     msgcat.CodeInt(503), // or msgcat.CodeString("ERR_MAINTENANCE")
+			Code:     msgcat.CodeString("ERR_MAINTENANCE"),
 		},
 	})
 	if err != nil {

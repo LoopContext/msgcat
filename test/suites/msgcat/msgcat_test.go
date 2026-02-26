@@ -81,7 +81,7 @@ var _ = Describe("Message Catalog", func() {
 
 	It("should return message code", func() {
 		message := messageCatalog.GetMessageWithCtx(ctx.Ctx, "greeting.hello", nil)
-		Expect(message.Code).To(Equal("1"))
+		Expect(message.Code).To(Equal("GREETING_HELLO"))
 	})
 
 	It("should set Message.Key and use Key when Code is empty for API identifier", func() {
@@ -171,7 +171,7 @@ var _ = Describe("Message Catalog", func() {
 		castedError := err.(msgcat.Error)
 		Expect(castedError.GetShortMessage()).To(Equal("Hola, breve descripción"))
 		Expect(castedError.GetLongMessage()).To(Equal("Hola, descripción muy larga. Solo puedes verme en la página de detalles."))
-		Expect(castedError.ErrorCode()).To(Equal("1"))
+		Expect(castedError.ErrorCode()).To(Equal("GREETING_HELLO"))
 	})
 
 	It("should be able to load messages from code", func() {
@@ -179,7 +179,7 @@ var _ = Describe("Message Catalog", func() {
 			Key:      "sys.9001",
 			LongTpl:  "Some long system message",
 			ShortTpl: "Some short system message",
-			Code:     msgcat.CodeInt(9001),
+			Code:     msgcat.CodeString("SYS_ERR"),
 		}})
 		Expect(err).NotTo(HaveOccurred())
 		err = messageCatalog.GetErrorWithCtx(ctx.Ctx, "sys.9001", nil)
@@ -191,7 +191,7 @@ var _ = Describe("Message Catalog", func() {
 			Key:      "sys.9001",
 			LongTpl:  "Mensagem longa de sistema",
 			ShortTpl: "Mensagem curta de sistema",
-			Code:     msgcat.CodeInt(9001),
+			Code:     msgcat.CodeString("SYS_ERR"),
 		}})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -218,7 +218,7 @@ var _ = Describe("Message Catalog", func() {
 			Key:      "sys.loaded",
 			LongTpl:  "Loaded from code",
 			ShortTpl: "Loaded from code short",
-			Code:     msgcat.CodeInt(9001),
+			Code:     msgcat.CodeString("SYS_ERR"),
 		}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(customCatalog.GetMessageWithCtx(ctx.Ctx, "sys.loaded", nil).ShortText).To(Equal("Loaded from code short"))
@@ -350,7 +350,7 @@ var _ = Describe("Message Catalog", func() {
 			Key:      "sys.runtime",
 			LongTpl:  "Runtime long",
 			ShortTpl: "Runtime short",
-			Code:     msgcat.CodeInt(9001),
+			Code:     msgcat.CodeString("SYS_ERR"),
 		}})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -528,7 +528,7 @@ var _ = Describe("Message Catalog", func() {
 					Key:      key,
 					LongTpl:  fmt.Sprintf("Long %s", key),
 					ShortTpl: fmt.Sprintf("Short %s", key),
-					Code:     msgcat.CodeInt(9000 + i),
+					Code:     msgcat.CodeString(fmt.Sprintf("ERR_%d", i)),
 				}})
 				if err != nil {
 					errCh <- err

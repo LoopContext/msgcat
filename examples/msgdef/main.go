@@ -31,7 +31,7 @@ var (
 		Key:   "items.count",
 		Short: "{{count}} items",
 		Long:  "Total: {{count}} items",
-		Code:  msgcat.CodeInt(200),
+		Code:  msgcat.CodeString("OK"),
 	}
 )
 
@@ -57,7 +57,7 @@ set:
   items.count:
     short: "{{count}} items"
     long: "Total: {{count}} items"
-    code: 200
+    code: OK
 `)
 	if err := os.WriteFile(filepath.Join(dir, "en.yaml"), en, 0o600); err != nil {
 		panic(err)

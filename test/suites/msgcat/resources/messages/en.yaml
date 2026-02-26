@@ -3,7 +3,7 @@ default:
   long: Unexpected error was received and was not found in catalog
 set:
   greeting.hello:
-    code: 1
+    code: GREETING_HELLO
     short: Hello short description
     long: Hello veeery long description. You can only see me in details page.
   greeting.template:

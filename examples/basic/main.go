@@ -24,15 +24,15 @@ func main() {
   long: Message not found in catalog
 set:
   greeting.hello:
-    code: 1
+    code: GREETING
     short: Hello
     long: Hello, welcome.
   greeting.template:
-    code: 2
+    code: WELCOME
     short: Hello {{name}}, role {{role}}
     long: Hello {{name}}, you are {{role}}.
   error.gone:
-    code: 404
+    code: NOT_FOUND
     short: Not found
     long: Resource not found.
 `)
